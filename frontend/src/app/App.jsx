@@ -7,6 +7,7 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
+import AuthenticatedLayout from "../components/AuthenticatedLayout.jsx";
 import GlobalChatOverlay from "../components/GlobalChatOverlay.jsx";
 import {
   ensureFirebasePersistence,
@@ -208,7 +209,12 @@ function AppContent() {
     clearAuth();
   };
 
-  const layoutProps = { onLogout: handleLogout };
+  const authenticatedPage = (page) =>
+    token ? (
+      <AuthenticatedLayout onLogout={handleLogout}>{page}</AuthenticatedLayout>
+    ) : (
+      <Navigate to="/auth" />
+    );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -221,10 +227,10 @@ function AppContent() {
         {authBootstrapped && token ? <GlobalChatOverlay /> : null}
         <Routes>
           <Route path="/auth" element={<AuthPage />} />
-          <Route path="/lobby" element={token ? <LobbyPage {...layoutProps} /> : <Navigate to="/auth" />} />
-          <Route path="/profile/:userId" element={token ? <ProfilePage {...layoutProps} /> : <Navigate to="/auth" />} />
-          <Route path="/profile/:userId/friends" element={token ? <FriendsPage {...layoutProps} /> : <Navigate to="/auth" />} />
-          <Route path="/admin" element={token ? <AdminPage {...layoutProps} /> : <Navigate to="/auth" />} />
+          <Route path="/lobby" element={authenticatedPage(<LobbyPage />)} />
+          <Route path="/profile/:userId" element={authenticatedPage(<ProfilePage />)} />
+          <Route path="/profile/:userId/friends" element={authenticatedPage(<FriendsPage />)} />
+          <Route path="/admin" element={authenticatedPage(<AdminPage />)} />
           <Route path="*" element={<Navigate to={token ? "/lobby" : "/auth"} />} />
         </Routes>
       </StateGuard>

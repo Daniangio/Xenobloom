@@ -1,4 +1,4 @@
-# Astralia Chronicles — Current Architecture (April 25, 2026)
+# xenobloom — Current Architecture (June 6, 2026)
 
 This document is the **current implementation baseline** (what runs today), including the new distributed runtime path, storage model, and known limitations.
 

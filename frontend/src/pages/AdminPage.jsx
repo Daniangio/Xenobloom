@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useStore } from "../store.js";
 import { buildApiUrl } from "../utils/connection.js";
 
-const AdminPage = ({ onLogout }) => {
+const AdminPage = () => {
   const { token, user } = useStore();
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState([]);
@@ -80,29 +80,19 @@ const AdminPage = ({ onLogout }) => {
 
   if (!user?.is_admin) {
     return (
-      <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100">
-        <div className="mx-auto max-w-3xl rounded-lg border border-slate-800 bg-slate-900 p-6">
-          <h1 className="text-2xl font-semibold text-white">Admin</h1>
-          <p className="mt-2 text-slate-400">Admin access is required.</p>
-          <Link className="mt-5 inline-block rounded-md bg-teal-400 px-3 py-2 text-sm font-semibold text-slate-950" to="/lobby">
-            Back to lobby
-          </Link>
-        </div>
-      </main>
+      <div className="rounded-lg border border-slate-800 bg-slate-900 p-6">
+        <h1 className="text-2xl font-semibold text-white">Admin</h1>
+        <p className="mt-2 text-slate-400">Admin access is required.</p>
+        <Link className="mt-5 inline-block rounded-md bg-teal-400 px-3 py-2 text-sm font-semibold text-slate-950" to="/lobby">
+          Back to lobby
+        </Link>
+      </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100">
-      <div className="mx-auto max-w-6xl">
-        <header className="mb-6 flex items-center justify-between border-b border-slate-800 pb-4">
-          <Link to="/lobby" className="text-lg font-semibold text-white">Game Services Template</Link>
-          <button className="rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-900" onClick={onLogout}>
-            Sign out
-          </button>
-        </header>
-
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+    <>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-white">Admin Backoffice</h1>
             <p className="mt-1 text-sm text-slate-400">Manage users and inspect administrative changes.</p>
@@ -118,7 +108,7 @@ const AdminPage = ({ onLogout }) => {
               Search
             </button>
           </div>
-        </div>
+      </div>
 
         {error ? <p className="mb-4 rounded-md bg-rose-950/70 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
 
@@ -185,8 +175,7 @@ const AdminPage = ({ onLogout }) => {
             {auditLogs.length === 0 ? <p className="py-5 text-slate-400">No audit logs yet.</p> : null}
           </div>
         </section>
-      </div>
-    </main>
+    </>
   );
 };
 

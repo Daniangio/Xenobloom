@@ -3,7 +3,7 @@
 This guide assumes:
 
 - You have SSH access to a fresh Ubuntu VM
-- You want the app to live under `/opt/astralia`
+- You want the app to live under `/opt/xenobloom`
 - GitHub Actions will later upload `deploy/docker-compose.yml` and `deploy/Caddyfile`
 - You will run the split runtime (`backend` gateway + `backend-worker`)
 
@@ -121,23 +121,23 @@ sudo ufw enable
 ## 4. Create the Deployment Directory
 
 ```bash
-sudo mkdir -p /opt/astralia/secrets
-sudo chown -R $USER:$USER /opt/astralia
+sudo mkdir -p /opt/xenobloom/secrets
+sudo chown -R $USER:$USER /opt/xenobloom
 ```
 
 ## 5. Create the Production Env File
 
-Use `deploy/.env.example` from this repository as your template on your local machine, then create `/opt/astralia/.env` on the VM with real values:
+Use `deploy/.env.example` from this repository as your template on your local machine, then create `/opt/xenobloom/.env` on the VM with real values:
 
 ```dotenv
 APP_DOMAIN=play.example.com
 
-POSTGRES_DB=astralia
-POSTGRES_USER=astralia
+POSTGRES_DB=xenobloom
+POSTGRES_USER=xenobloom
 POSTGRES_PASSWORD=replace-with-a-long-random-password
 
-BACKEND_IMAGE=ghcr.io/your-github-owner/astralia-backend:latest
-FRONTEND_IMAGE=ghcr.io/your-github-owner/astralia-frontend:latest
+BACKEND_IMAGE=ghcr.io/your-github-owner/xenobloom-backend:latest
+FRONTEND_IMAGE=ghcr.io/your-github-owner/xenobloom-frontend:latest
 
 FIREBASE_PROJECT_ID=your-firebase-project-id
 FIREBASE_PRIMARY_ADMIN_EMAIL=admin@example.com
@@ -146,13 +146,13 @@ DISTRIBUTED_GATEWAY_RUN_BRIDGE=false
 
 # Replay artifact storage.
 # Keep local for simple test deployments. Set to gcs + true after creating the bucket
-# and placing the service account JSON in /opt/astralia/secrets.
+# and placing the service account JSON in /opt/xenobloom/secrets.
 USE_OBJECT_STORAGE_REPLAYS=true
 REPLAY_STORAGE_KIND=gcs
-REPLAY_BUCKET=astralia-replays-dev
+REPLAY_BUCKET=xenobloom-replays-dev
 REPLAY_EPHEMERAL_PREFIX=replays/ephemeral
 REPLAY_PERMANENT_PREFIX=replays/permanent
-GOOGLE_APPLICATION_CREDENTIALS=/opt/astralia/secrets/gcp-service-account.dev.json
+GOOGLE_APPLICATION_CREDENTIALS=/opt/xenobloom/secrets/gcp-service-account.dev.json
 
 # Global chat over Redis Streams.
 CHAT_STREAM_PREFIX=chat
@@ -180,7 +180,7 @@ Important:
 Create these files on the VM:
 
 ```text
-/opt/astralia/secrets/firebase-admin.prod.json
+/opt/xenobloom/secrets/firebase-admin.prod.json
 ```
 
 - `firebase-admin.prod.json` is your production Firebase service-account JSON.
@@ -192,7 +192,7 @@ Create these files on the VM:
 Before GitHub Actions runs for the first time, copy these files to the VM:
 
 ```bash
-scp deploy/docker-compose.yml deploy/Caddyfile your-user@your-vm:/opt/astralia/
+scp deploy/docker-compose.yml deploy/Caddyfile your-user@your-vm:/opt/xenobloom/
 ```
 
 If your SSH port is not `22`, add `-P <port>`.
@@ -224,7 +224,7 @@ Notes:
 Then start the stack:
 
 ```bash
-cd /opt/astralia
+cd /opt/xenobloom
 docker compose --env-file .env pull
 docker compose --env-file .env up -d
 ```
@@ -256,7 +256,7 @@ Once this works, the GitHub Actions workflow can take over future deploys.
 Run only when needed:
 
 ```bash
-cd /opt/astralia
+cd /opt/xenobloom
 docker compose --env-file .env --profile ops up -d redisinsight
 ```
 
@@ -286,7 +286,7 @@ Then open `http://localhost:5540`.
   - On very slow links, run once manually on VM:
 
 ```bash
-cd /opt/astralia
+cd /opt/xenobloom
 docker compose --env-file .env pull backend frontend backend-worker
 docker compose --env-file .env up -d --remove-orphans
 ```

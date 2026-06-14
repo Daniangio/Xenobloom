@@ -37,14 +37,14 @@ From the repository root:
 docker compose up --build
 ```
 
-That starts:
+That starts services on the published ports configured in `.env`:
 
-- Frontend on `http://localhost:5173`
-- Backend on `http://localhost:8000`
-- FastAPI docs on `http://localhost:8000/docs`
-- Adminer on `http://localhost:8081`
-- PostgreSQL on `localhost:5432`
-- Redis on `localhost:6379`
+- Frontend on `http://localhost:${FRONTEND_PORT}`
+- Backend on `http://localhost:${BACKEND_PORT}`
+- FastAPI docs on `http://localhost:${BACKEND_PORT}/docs`
+- Adminer on `http://localhost:${ADMINER_PORT}`
+- PostgreSQL on `localhost:${POSTGRES_PORT}`
+- Redis on `localhost:${REDIS_PORT}`
 
 ## Optional RedisInsight
 
@@ -94,7 +94,9 @@ docker compose logs -f backend frontend
 
 - The root `docker-compose.yml` is the base local stack.
 - `docker-compose.override.yml` adds localhost-only database ports and Adminer.
-- The frontend uses Vite and connects to `/api` and `/ws` through `VITE_API_URL`
-  and `VITE_WS_URL`.
+- The frontend uses Vite and connects to the backend through `VITE_API_URL`
+  and `VITE_WS_URL`. Leave those values blank in `.env` for Docker Compose to
+  derive them from `BACKEND_PORT`; set them only when you need an explicit
+  override.
 - Game rooms, matchmaking, rules, and game state are intentionally absent from
   this template.

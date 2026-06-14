@@ -40,10 +40,10 @@ inside your game-specific layer.
 
 5. Open:
 
-   - Frontend: http://localhost:5173
-   - Backend API: http://localhost:8000
-   - Backend docs: http://localhost:8000/docs
-   - Adminer: http://localhost:8081
+   - Frontend: `http://localhost:${FRONTEND_PORT}` from `.env`
+   - Backend API: `http://localhost:${BACKEND_PORT}` from `.env`
+   - Backend docs: `http://localhost:${BACKEND_PORT}/docs` from `.env`
+   - Adminer: `http://localhost:${ADMINER_PORT}` from `.env`
 
 ## Configuration
 

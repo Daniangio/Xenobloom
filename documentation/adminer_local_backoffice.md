@@ -8,7 +8,7 @@ This project now includes a local `Adminer` service in `docker-compose.yml`.
 - Binding: localhost only
 - Scope: local development / local operations only
 
-This is intentionally **not** integrated with Astralia app authentication. Adminer is a database tool, not an in-app admin page.
+This is intentionally **not** integrated with Xenobloom app authentication. Adminer is a database tool, not an in-app admin page.
 
 The practical security model is:
 
@@ -23,9 +23,9 @@ Use these values in the Adminer login page:
 
 - System: `PostgreSQL`
 - Server: `postgres`
-- Username: `astralia`
-- Password: `astralia_dev_password`
-- Database: `astralia`
+- Username: `xenobloom`
+- Password: `xenobloom_dev_password`
+- Database: `xenobloom`
 
 ## Start it
 
@@ -74,5 +74,5 @@ Current high-value tables include:
 ## Notes
 
 - App-level seeded admin users such as `admin` / `operator` are **not** the same thing as database users.
-- Adminer login uses PostgreSQL credentials, not Astralia account credentials.
+- Adminer login uses PostgreSQL credentials, not Xenobloom account credentials.
 - Keep this service localhost-bound. Do not expose it publicly.
