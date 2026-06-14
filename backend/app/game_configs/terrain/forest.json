@@ -1,0 +1,10 @@
+{
+  "id": "forest",
+  "label": "Forest",
+  "buildable": false,
+  "color": "#2f855a",
+  "initial_hydration": 1,
+  "drought_resistance_delta": 2,
+  "wither_hydration_max": 0,
+  "wither_stress_threshold": 3
+}

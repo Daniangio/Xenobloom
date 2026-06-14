@@ -1,0 +1,8 @@
+{
+  "id": "core_neural",
+  "label": "Neural Core",
+  "building_id": "core",
+  "cost_life": 4,
+  "cost_actions": 1,
+  "maturity_bonus": 1
+}

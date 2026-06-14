@@ -1,0 +1,9 @@
+{
+  "id": "bloom_scoring",
+  "label": "Scoring Bloom",
+  "building_id": "bloom",
+  "cost_life": 3,
+  "cost_actions": 1,
+  "maturity_bonus_if_hydration": 3,
+  "maturity_bonus": 1
+}

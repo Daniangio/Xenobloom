@@ -1,0 +1,22 @@
+{
+  "id": "bloom",
+  "label": "Bloom",
+  "shape": "circle",
+  "color": "#48bb78",
+  "build_cost_life": 1,
+  "build_cost_actions": 1,
+  "requires_adjacent_colony": true,
+  "requires_terrain": "neutral",
+  "requires_hydration_min": 0,
+  "sustain_cost": 1,
+  "life_production_by_hydration": [
+    { "min": 3, "value": 2 },
+    { "min": 1, "value": 1 }
+  ],
+  "maturity_if_hydration_min": 0,
+  "stress_by_hydration": [
+    { "max": -2, "stress": 2 },
+    { "max": -1, "stress": 1 }
+  ],
+  "upgrade_ids": ["bloom_resilient", "bloom_scoring"]
+}

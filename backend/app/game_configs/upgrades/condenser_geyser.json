@@ -1,0 +1,8 @@
+{
+  "id": "condenser_geyser",
+  "label": "Geyser Condenser",
+  "building_id": "condenser",
+  "cost_life": 2,
+  "cost_actions": 1,
+  "instant_hydration_delta": 3
+}

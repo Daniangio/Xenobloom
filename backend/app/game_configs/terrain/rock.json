@@ -1,0 +1,9 @@
+{
+  "id": "rock",
+  "label": "Rock",
+  "buildable": false,
+  "color": "#4a5568",
+  "hydration_delta_threshold": 3,
+  "hydration_min": -1,
+  "hydration_max": 1
+}

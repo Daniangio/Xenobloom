@@ -4,10 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .runtime_state import get_game_room_service
 from .schemas import (
+    GameCommandQueuedResponse,
+    GameCommandRequest,
     GameHistoryResponse,
     GameResultResponse,
     GameRoomCreateRequest,
     GameRoomResponse,
+    GameStateResponse,
 )
 from .security import get_current_user
 from .server_models import User
@@ -46,6 +49,38 @@ async def get_game_room(room_id: str, current_user: User = Depends(get_current_u
 async def end_game_room(room_id: str, current_user: User = Depends(get_current_user)):
     try:
         return await _service().enqueue_end_room(room_id=room_id, user=current_user)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/game/rooms/{room_id}/state", response_model=GameStateResponse)
+async def get_game_state(
+    room_id: str,
+    selected_tile: str | None = None,
+    current_user: User = Depends(get_current_user),
+):
+    state = await _service().get_game_state(
+        room_id=room_id,
+        user=current_user,
+        selected_tile=selected_tile,
+    )
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game state not found.")
+    return state
+
+
+@router.post("/game/rooms/{room_id}/commands", response_model=GameCommandQueuedResponse)
+async def enqueue_game_command(
+    room_id: str,
+    payload: GameCommandRequest,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return await _service().enqueue_game_command(
+            room_id=room_id,
+            user=current_user,
+            command=payload.model_dump(),
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

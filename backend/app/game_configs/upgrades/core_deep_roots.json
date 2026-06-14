@@ -1,0 +1,8 @@
+{
+  "id": "core_deep_roots",
+  "label": "Deep Roots",
+  "building_id": "core",
+  "cost_life": 4,
+  "cost_actions": 1,
+  "life_production_override": 5
+}

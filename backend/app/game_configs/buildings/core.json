@@ -1,0 +1,11 @@
+{
+  "id": "core",
+  "label": "Core",
+  "shape": "circle",
+  "color": "#ecc94b",
+  "buildable": false,
+  "life_production": 3,
+  "sustain_cost": 0,
+  "maturity_per_season": 1,
+  "upgrade_ids": ["core_deep_roots", "core_neural"]
+}

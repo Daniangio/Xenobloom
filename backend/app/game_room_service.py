@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from .game_engine import GameEngine
 from .server_models import User
 
 
@@ -24,6 +26,14 @@ def _room_key(room_id: str) -> str:
 
 def _result_key(room_id: str) -> str:
     return f"game:result:{room_id}"
+
+
+def _state_key(room_id: str) -> str:
+    return f"game:state:{room_id}"
+
+
+def _seen_commands_key(room_id: str) -> str:
+    return f"game:room:{room_id}:seen_commands"
 
 
 def _history_key(user_id: str) -> str:
@@ -45,11 +55,14 @@ def _public_room(room: dict[str, Any]) -> dict[str, Any]:
 
 
 class GameRoomService:
-    def __init__(self, redis_client=None) -> None:
+    def __init__(self, redis_client=None, engine: GameEngine | None = None) -> None:
         self.redis = redis_client
+        self.engine = engine or GameEngine()
         self._memory_rooms: dict[str, dict[str, Any]] = {}
+        self._memory_states: dict[str, dict[str, Any]] = {}
         self._memory_results: dict[str, dict[str, Any]] = {}
         self._memory_history: dict[str, list[str]] = {}
+        self._memory_seen_commands: dict[str, set[str]] = {}
 
     def configure_redis(self, redis_client) -> None:
         self.redis = redis_client
@@ -74,8 +87,10 @@ class GameRoomService:
         }
         if self.redis is None:
             self._memory_rooms[room_id] = room
+            self._memory_states[room_id] = self.engine.create_initial_state()
             return _public_room(room)
         await self.redis.hset(_room_key(room_id), mapping=room)
+        await self._save_state(room_id, self.engine.create_initial_state())
         return _public_room(room)
 
     async def get_room(self, *, room_id: str, user: User) -> dict[str, Any] | None:
@@ -94,6 +109,8 @@ class GameRoomService:
             "action": "finish_room",
             "room_id": room_id,
             "user_id": user.id,
+            "command_id": f"finish_{uuid.uuid4().hex}",
+            "client_timestamp_ms": str(int(time.time() * 1000)),
             "requested_at": _now_iso(),
         }
         if self.redis is None:
@@ -102,6 +119,77 @@ class GameRoomService:
             await self.redis.xadd(COMMAND_STREAM_KEY, command, maxlen=1000, approximate=True)
         return _public_room(room)
 
+    async def get_game_state(self, *, room_id: str, user: User, selected_tile: str | None = None) -> dict[str, Any] | None:
+        room = await self._load_room(room_id)
+        if not room or room.get("owner_user_id") != user.id:
+            return None
+        state = await self._load_state(room_id)
+        if state is None:
+            return None
+        return self.engine.public_state(state, selected_tile=selected_tile)
+
+    async def enqueue_game_command(
+        self,
+        *,
+        room_id: str,
+        user: User,
+        command: dict[str, Any],
+    ) -> dict[str, Any]:
+        room = await self._load_room(room_id)
+        if not room or room.get("owner_user_id") != user.id:
+            raise LookupError("Game room not found.")
+        command_id = str(command.get("command_id") or "").strip() or f"cmd_{uuid.uuid4().hex}"
+        command_payload = {
+            "action": "game_command",
+            "room_id": room_id,
+            "user_id": user.id,
+            "command_id": command_id,
+            "type": str(command.get("type") or ""),
+            "tile_key": str(command.get("tile_key") or ""),
+            "building_type": str(command.get("building_type") or ""),
+            "upgrade_id": str(command.get("upgrade_id") or ""),
+            "expected_revision": str(command.get("expected_revision") if command.get("expected_revision") is not None else ""),
+            "client_timestamp_ms": str(command.get("client_timestamp_ms") or int(time.time() * 1000)),
+            "requested_at": _now_iso(),
+        }
+        if self.redis is None:
+            await self.apply_game_command(command_payload)
+        else:
+            await self.redis.xadd(COMMAND_STREAM_KEY, command_payload, maxlen=5000, approximate=True)
+        state = await self._load_state(room_id)
+        return {
+            "status": "queued",
+            "command_id": command_id,
+            "revision": int((state or {}).get("revision") or 0),
+        }
+
+    async def apply_game_command(self, command: dict[str, Any]) -> dict[str, Any] | None:
+        room_id = str(command.get("room_id") or "")
+        user_id = str(command.get("user_id") or "")
+        command_id = str(command.get("command_id") or "")
+        if not room_id or not user_id or not command_id:
+            return None
+        room = await self._load_room(room_id)
+        if not room or room.get("owner_user_id") != user_id or room.get("state") == ROOM_STATE_FINISHED:
+            return None
+        if not await self._mark_command_seen(room_id, command_id):
+            return await self._load_state(room_id)
+        state = await self._load_state(room_id)
+        if state is None:
+            return None
+        engine_command = self._normalize_engine_command(command)
+        try:
+            self.engine.validate_command(state, engine_command)
+            next_state = self.engine.apply_command(state, engine_command)
+        except ValueError as exc:
+            next_state = state
+            next_state["logs"] = [f"Rejected order: {exc}", *list(next_state.get("logs") or [])][:8]
+            next_state["revision"] = int(next_state.get("revision") or 0) + 1
+        await self._save_state(room_id, next_state)
+        if next_state.get("phase") == ROOM_STATE_FINISHED:
+            await self.finish_room(room_id=room_id, user_id=user_id)
+        return next_state
+
     async def finish_room(self, *, room_id: str, user_id: str) -> dict[str, Any] | None:
         room = await self._load_room(room_id)
         if not room or room.get("owner_user_id") != user_id:
@@ -109,20 +197,27 @@ class GameRoomService:
         if room.get("state") == ROOM_STATE_FINISHED:
             return await self.get_result(room_id=room_id, user_id=user_id)
         now = _now_iso()
+        state = await self._load_state(room_id) or {}
+        outcome = state.get("game_over") or "completed"
+        maturity = int(state.get("maturity") or 0)
+        turns = max(0, int(state.get("season") or 1) - 1)
         result = {
             "id": room_id,
             "room_id": room_id,
             "user_id": user_id,
             "mode": room.get("mode", "solo"),
             "game_type": room.get("game_type", "quick_match"),
-            "outcome": "completed",
-            "maturity": "128",
-            "turns": "8",
+            "outcome": str(outcome),
+            "maturity": str(maturity),
+            "turns": str(turns),
             "duration_seconds": str(max(1, int(time.time() - _iso_to_epoch(room.get("started_at"))))),
-            "summary": "Mock colony stabilized after a quick solo simulation.",
+            "summary": f"Colony run ended with {maturity} maturity after {turns} seasons.",
             "created_at": now,
         }
         room.update({"state": ROOM_STATE_FINISHED, "ended_at": now, "result_id": room_id})
+        if state:
+            state["phase"] = ROOM_STATE_FINISHED
+            await self._save_state(room_id, state)
         if self.redis is None:
             self._memory_rooms[room_id] = room
             self._memory_results[room_id] = result
@@ -165,6 +260,42 @@ class GameRoomService:
             return self._memory_results.get(room_id)
         result = await self.redis.hgetall(_result_key(room_id))
         return dict(result) if result else None
+
+    async def _load_state(self, room_id: str) -> dict[str, Any] | None:
+        if self.redis is None:
+            return self._memory_states.get(room_id)
+        raw = await self.redis.get(_state_key(room_id))
+        if not raw:
+            return None
+        return json.loads(raw)
+
+    async def _save_state(self, room_id: str, state: dict[str, Any]) -> None:
+        if self.redis is None:
+            self._memory_states[room_id] = state
+            return
+        await self.redis.set(_state_key(room_id), json.dumps(state, separators=(",", ":")))
+
+    async def _mark_command_seen(self, room_id: str, command_id: str) -> bool:
+        if self.redis is None:
+            seen = self._memory_seen_commands.setdefault(room_id, set())
+            if command_id in seen:
+                return False
+            seen.add(command_id)
+            return True
+        return bool(await self.redis.sadd(_seen_commands_key(room_id), command_id))
+
+    @staticmethod
+    def _normalize_engine_command(command: dict[str, Any]) -> dict[str, Any]:
+        expected_revision = command.get("expected_revision")
+        return {
+            "command_id": str(command.get("command_id") or ""),
+            "type": str(command.get("type") or ""),
+            "tile_key": str(command.get("tile_key") or ""),
+            "building_type": str(command.get("building_type") or ""),
+            "upgrade_id": str(command.get("upgrade_id") or ""),
+            "expected_revision": int(expected_revision) if str(expected_revision or "").strip() else None,
+            "client_timestamp_ms": int(command.get("client_timestamp_ms") or 0),
+        }
 
     def _public_result(self, result: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -230,6 +361,8 @@ class GameWorker:
                 room_id=str(fields.get("room_id") or ""),
                 user_id=str(fields.get("user_id") or ""),
             )
+        elif action == "game_command":
+            await self.service.apply_game_command(fields)
 
 
 def _iso_to_epoch(value: Any) -> float:

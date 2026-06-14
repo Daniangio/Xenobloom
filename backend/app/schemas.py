@@ -77,6 +77,43 @@ class GameRoomResponse(BaseModel):
     result_id: Optional[str] = None
 
 
+class GameCommandRequest(BaseModel):
+    command_id: str
+    type: str
+    expected_revision: Optional[int] = None
+    client_timestamp_ms: Optional[int] = None
+    tile_key: Optional[str] = None
+    building_type: Optional[str] = None
+    upgrade_id: Optional[str] = None
+
+
+class GameCommandQueuedResponse(BaseModel):
+    status: str
+    command_id: str
+    revision: int
+
+
+class GameStateResponse(BaseModel):
+    revision: int
+    phase: str
+    game_over: Optional[str] = None
+    season: int
+    max_seasons: int
+    target_maturity: int
+    wind_dir: int
+    wind_label: str
+    actions_left: int
+    maturity: int
+    base_economy: Dict[str, Any]
+    live_economy: Dict[str, Any]
+    available_life: int
+    logs: List[str]
+    grid: Dict[str, Any]
+    config: Dict[str, Any]
+    selected_tile: Optional[Dict[str, Any]] = None
+    available_actions: List[Dict[str, Any]]
+
+
 class GameResultResponse(BaseModel):
     id: str
     room_id: str
