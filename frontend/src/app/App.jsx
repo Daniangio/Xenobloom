@@ -180,7 +180,7 @@ function AppContent() {
           return;
         }
         try {
-          const accessToken = await firebaseUser.getIdToken();
+          const accessToken = await firebaseUser.getIdToken(true);
           const ok = setAuthSession({ accessToken });
           if (ok) await fetchAuthMe();
         } finally {
