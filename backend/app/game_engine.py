@@ -359,7 +359,8 @@ class GameEngine:
                     target["hydration"] = self._clamp_hydration(int(target["hydration"]) + 1, target.get("terrain"))
 
     def _resolve_drought(self, state: dict[str, Any], rng: random.Random) -> None:
-        sources = [copy.copy(tile) for tile in state["grid"].values() if int(tile.get("hydration") or 0) <= -1]
+        drought_level = int(self.rules["hydration_min"])
+        sources = [copy.copy(tile) for tile in state["grid"].values() if int(tile.get("hydration") or 0) <= drought_level]
         rng.shuffle(sources)
         for source in sources:
             tile = state["grid"][hex_key(source["q"], source["r"])]
@@ -398,6 +399,7 @@ class GameEngine:
                     tile["terrain_stress"] = int(tile.get("terrain_stress") or 0) + 1
                 if int(tile.get("terrain_stress") or 0) >= int(forest["wither_stress_threshold"]):
                     tile["terrain"] = "neutral"
+                    tile["terrain_stress"] = 0
                     turn_logs.append(f"Forest at {tile['q']},{tile['r']} withered.")
 
             building_id = tile.get("building")

@@ -39,3 +39,38 @@ select {
     "Segoe UI",
     sans-serif;
 }
+
+.xeno-wind-particle {
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(14, 116, 144, 0.72), transparent);
+  box-shadow: 0 0 8px rgba(14, 116, 144, 0.28);
+  opacity: 0;
+  transform: rotate(var(--wind-angle)) translateX(-48px);
+  animation: xeno-wind-particle var(--wind-duration) linear infinite;
+  animation-delay: var(--wind-delay);
+}
+
+@keyframes xeno-wind-particle {
+  0% {
+    opacity: 0;
+    transform: rotate(var(--wind-angle)) translateX(-48px);
+  }
+
+  12% {
+    opacity: 0;
+  }
+
+  28% {
+    opacity: 0.82;
+  }
+
+  72% {
+    opacity: 0.82;
+  }
+
+  100% {
+    opacity: 0;
+    transform: rotate(var(--wind-angle)) translateX(92px);
+  }
+}

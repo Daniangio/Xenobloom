@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Activity,
+  ArrowUp,
+  Check,
   Droplets,
   Flame,
   Info,
   Leaf,
   Sprout,
-  Wind,
   X,
   Zap,
 } from "lucide-react";
@@ -17,6 +18,14 @@ import { buildApiUrl } from "../utils/connection.js";
 const HEX_SIZE = 22;
 const HYDRATION_RANGE = { min: -3, max: 3 };
 const STRESS_RANGE = { min: 0, max: 3 };
+const WIND_ROTATION = {
+  E: 90,
+  SE: 150,
+  SW: 210,
+  W: 270,
+  NW: 330,
+  NE: 30,
+};
 
 const GameRoomPage = () => {
   const { roomId } = useParams();
@@ -137,7 +146,7 @@ const GameRoomPage = () => {
             {selectedTile ? (
               <div className="mt-4 space-y-4">
                 <BipolarStat icon={<Droplets size={15} />} label="Hydration" value={selectedTile.hydration} range={HYDRATION_RANGE} />
-                <PositiveStat icon={<Flame size={15} />} label="Stress" value={Math.max(selectedTile.stress || 0, selectedTile.terrain_stress || 0)} range={STRESS_RANGE} />
+                <PositiveStat icon={<Flame size={15} />} label="Stress" value={tileStress(selectedTile)} range={STRESS_RANGE} />
                 <div className="text-sm capitalize text-slate-400">Terrain: {selectedTile.terrain}</div>
               </div>
             ) : (
@@ -165,18 +174,32 @@ const GameRoomPage = () => {
             <h2 className="font-semibold text-white">Actions</h2>
             <div className="mt-4 flex flex-col gap-2">
               {(gameState?.available_actions || []).map((action) => (
-                <button
-                  className="rounded-md border border-slate-700 px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50"
-                  disabled={busy}
+                <div
+                  className="grid grid-cols-[1fr_auto] items-stretch overflow-hidden rounded-md border border-slate-700 bg-slate-950/40 text-sm text-slate-200"
                   key={`${action.type}:${action.building_type || action.upgrade_id || "repair"}`}
-                  onClick={() => openActionDetails(action)}
-                  type="button"
                 >
-                  <span className="font-semibold text-white">{action.label}</span>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    {action.cost_actions || 0} action, {action.cost_life || 0} life
-                  </span>
-                </button>
+                  <button
+                    className="flex min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-slate-800 disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => openActionDetails(action)}
+                    type="button"
+                  >
+                    <ActionIcon action={action} />
+                    <span className="min-w-0">
+                      <span className="block truncate font-semibold text-white">{action.label}</span>
+                      <ActionCostLine action={action} />
+                    </span>
+                  </button>
+                  <button
+                    className="flex w-11 items-center justify-center border-l border-slate-700 text-teal-200 hover:bg-teal-400 hover:text-slate-950 disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => submitCommand(commandFromAction(action, selectedTileKey))}
+                    title={`Perform ${action.label}`}
+                    type="button"
+                  >
+                    <Check size={17} />
+                  </button>
+                </div>
               ))}
               {gameState && (gameState.available_actions || []).length === 0 ? (
                 <p className="text-sm text-slate-500">No legal actions for this tile.</p>
@@ -186,8 +209,10 @@ const GameRoomPage = () => {
         </aside>
 
         <section className="relative min-h-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-100">
+          <WindField windLabel={gameState?.wind_label} />
           <TopBoardPanel busy={busy} endGame={endGame} gameState={gameState} submitCommand={submitCommand} />
-          <svg viewBox="-250 -205 500 410" className="h-full w-full min-w-[36rem]">
+          <WindIndicator windLabel={gameState?.wind_label} />
+          <svg viewBox="-250 -205 500 410" className="relative z-[1] h-full w-full min-w-[36rem]">
             {sortedTiles.map((tile) => (
               <HexTile
                 config={gameState?.config}
@@ -198,7 +223,7 @@ const GameRoomPage = () => {
               />
             ))}
           </svg>
-          <BottomTilePanel config={gameState?.config} selectedTile={selectedTile} />
+          <BottomResourcePanel gameState={gameState} />
         </section>
       </div>
 
@@ -219,16 +244,10 @@ const GameRoomPage = () => {
 };
 
 const TopBoardPanel = ({ gameState, busy, submitCommand, endGame }) => {
-  const life = gameState?.resources?.life || {};
   return (
-    <div className="absolute right-4 top-4 z-10 flex flex-wrap items-center justify-end gap-2 rounded-lg border border-slate-800 bg-slate-950/95 p-2 shadow-xl">
+    <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center justify-start gap-2 rounded-lg border border-slate-800 bg-slate-950/95 p-2 shadow-xl">
       <CompactStat icon={<Activity size={14} />} label="Season" value={`${gameState?.season || "-"} / ${gameState?.max_seasons || "-"}`} />
       <CompactStat icon={<Leaf size={14} />} label="Maturity" value={`${gameState?.maturity || 0} / ${gameState?.target_maturity || "-"}`} />
-      <CompactStat icon={<Wind size={14} />} label="Wind" value={gameState?.wind_label || "-"} />
-      <ResourceCompact label="Life" symbol="◆" value={life.produced} next={life.next_produced} tone="text-emerald-300" />
-      <ResourceCompact label="Alloc" symbol="◈" value={life.allocated} next={life.next_allocated} tone="text-orange-300" />
-      <ResourceCompact label="Free" symbol="◇" value={life.available} tone="text-blue-300" />
-      <CompactStat icon={<Zap size={14} />} label="Acts" value={gameState?.actions_left ?? "-"} />
       <button
         className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-white disabled:opacity-50"
         disabled={busy || !gameState}
@@ -259,33 +278,174 @@ const CompactStat = ({ icon, label, value }) => (
   </div>
 );
 
-const ResourceCompact = ({ symbol, label, value, next, tone }) => (
-  <div className="flex min-w-16 items-center gap-2 rounded-md bg-slate-900 px-2 py-1.5">
-    <span className={`text-sm ${tone}`}>{symbol}</span>
-    <span>
-      <span className="block text-[10px] uppercase tracking-[0.12em] text-slate-500">{label}</span>
-      <span className={`block text-xs font-semibold ${tone}`}>
-        {value ?? "-"}{next !== undefined && next !== value ? <span className="text-[10px] text-slate-500"> ({next})</span> : null}
+const WindField = ({ windLabel }) => {
+  const angle = (WIND_ROTATION[windLabel] ?? 90) - 90;
+  const particles = [
+    { left: "13%", top: "22%", delay: "0s", duration: "2.4s", width: "3.8rem" },
+    { left: "31%", top: "38%", delay: "0.8s", duration: "3.1s", width: "2.8rem" },
+    { left: "62%", top: "19%", delay: "1.6s", duration: "2.7s", width: "4.4rem" },
+    { left: "78%", top: "52%", delay: "0.3s", duration: "3.4s", width: "3.2rem" },
+    { left: "46%", top: "67%", delay: "2.1s", duration: "2.9s", width: "4rem" },
+    { left: "19%", top: "74%", delay: "1.2s", duration: "3.6s", width: "2.5rem" },
+    { left: "70%", top: "82%", delay: "2.7s", duration: "3.2s", width: "3.6rem" },
+    { left: "41%", top: "14%", delay: "3.1s", duration: "2.6s", width: "3rem" },
+  ];
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[2] overflow-hidden">
+      {particles.map((particle, index) => (
+        <span
+          className="xeno-wind-particle absolute"
+          key={`${windLabel || "wind"}-${index}`}
+          style={{
+            "--wind-angle": `${angle}deg`,
+            "--wind-delay": particle.delay,
+            "--wind-duration": particle.duration,
+            left: particle.left,
+            top: particle.top,
+            width: particle.width,
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+const WindIndicator = ({ windLabel }) => {
+  const angle = WIND_ROTATION[windLabel] ?? 90;
+  return (
+    <div className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/95 px-3 py-2 shadow-xl">
+      <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-sky-200">
+        <ArrowUp size={18} style={{ transform: `rotate(${angle}deg)` }} />
       </span>
+      <span className="font-mono text-sm font-semibold text-white">{windLabel || "-"}</span>
+    </div>
+  );
+};
+
+const BottomResourcePanel = ({ gameState }) => {
+  const life = gameState?.resources?.life || {};
+  const maxActions = Math.max(Number(gameState?.actions_left || 0), Number(gameState?.config?.rules?.actions_per_season || 3));
+  return (
+    <div className="absolute bottom-0 left-0 right-0 flex min-h-16 flex-wrap items-center gap-5 bg-slate-950/95 px-5 py-3 text-sm">
+      <ActionMeter available={Number(gameState?.actions_left || 0)} total={maxActions} />
+      <ResourceMeter
+        allocated={Number(life.allocated || 0)}
+        available={Number(life.available || 0)}
+        color="bg-emerald-400"
+        label="Life"
+        nextAllocated={Number(life.next_allocated || 0)}
+        nextProduced={Number(life.next_produced || 0)}
+        produced={Number(life.produced || 0)}
+        symbol="◆"
+      />
+    </div>
+  );
+};
+
+const ActionMeter = ({ available, total }) => (
+  <div className="flex items-center gap-3">
+    <span className="min-w-5 text-right font-semibold text-white">{available}</span>
+    <span className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-teal-200">
+      <Zap size={17} />
     </span>
+    <SquareRows count={total} filled={available} color="bg-teal-300" />
   </div>
 );
 
-const BottomTilePanel = ({ selectedTile, config }) => (
-  <div className="absolute bottom-0 left-0 right-0 flex min-h-16 items-center justify-between gap-5 bg-slate-950/95 px-5 py-3 text-sm">
-    {selectedTile ? (
-      <>
-        <span className="font-mono text-slate-300">[{selectedTile.q}, {selectedTile.r}]</span>
-        <span className="capitalize text-slate-400">{selectedTile.terrain}</span>
-        <BipolarStat compact icon={<Droplets size={14} />} label="Hydration" value={selectedTile.hydration} range={HYDRATION_RANGE} />
-        <PositiveStat compact icon={<Flame size={14} />} label="Stress" value={Math.max(selectedTile.stress || 0, selectedTile.terrain_stress || 0)} range={STRESS_RANGE} />
-        <span className="text-slate-300">{formatBuilding(selectedTile, config)}</span>
-      </>
-    ) : (
-      <span className="text-slate-500">Select a tile to inspect state.</span>
-    )}
+const ResourceMeter = ({ symbol, label, produced, allocated, available, nextProduced, nextAllocated, color }) => (
+  <div className="flex items-center gap-3" title={`${label}: ${available} available`}>
+    <span className="min-w-5 text-right font-semibold text-white">{available}</span>
+    <span className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-emerald-300">
+      {symbol}
+    </span>
+    <SquareRows count={produced} faded={allocated} filled={available} color={color} fadedFirst />
+    <ResourceDeltaPreview
+      allocated={allocated}
+      color={color}
+      nextAllocated={nextAllocated}
+      nextProduced={nextProduced}
+      produced={produced}
+    />
   </div>
 );
+
+const ResourceDeltaPreview = ({ produced, allocated, nextProduced, nextAllocated, color }) => {
+  const producedDelta = Number(nextProduced || 0) - Number(produced || 0);
+  const allocatedDelta = Number(nextAllocated || 0) - Number(allocated || 0);
+  if (producedDelta === 0 && allocatedDelta === 0) return null;
+
+  const addedAllocated = Math.max(Math.min(producedDelta, allocatedDelta), 0);
+  const addedFree = Math.max(producedDelta - addedAllocated, 0);
+  const convertedToAllocated = Math.max(allocatedDelta - Math.max(producedDelta, 0), 0);
+  const removedProduced = Math.max(-producedDelta, 0);
+  const freedAllocated = Math.max(-allocatedDelta, 0);
+
+  return (
+    <span className="flex items-center gap-1 rounded-md border border-slate-800 bg-slate-950 px-2 py-1" title="Next turn economy change">
+      {addedAllocated || addedFree ? (
+        <span className="flex items-center gap-1">
+          <span className="text-[11px] font-semibold text-slate-400">+</span>
+          <SquareGlyphs color={color} count={addedAllocated} faded />
+          <SquareGlyphs color={color} count={addedFree} />
+        </span>
+      ) : null}
+      {convertedToAllocated ? (
+        <SquareTransition color={color} count={convertedToAllocated} />
+      ) : null}
+      {freedAllocated ? (
+        <SquareTransition color={color} count={freedAllocated} reverse />
+      ) : null}
+      {removedProduced ? (
+        <span className="flex items-center gap-1">
+          <span className="text-[11px] font-semibold text-slate-400">-</span>
+          <SquareGlyphs color={color} count={removedProduced} />
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
+const SquareTransition = ({ color, count, reverse = false }) => (
+  <span className="flex items-center gap-1">
+    <SquareGlyphs color={color} count={count} faded={reverse} />
+    <span className="text-[11px] text-slate-500">→</span>
+    <SquareGlyphs color={color} count={count} faded={!reverse} />
+  </span>
+);
+
+const SquareGlyphs = ({ color, count, faded = false }) => {
+  if (!count) return null;
+  return (
+    <span className="flex items-center gap-1">
+      {Array.from({ length: count }, (_, index) => (
+        <span className={`h-3 w-3 rounded-sm border border-slate-700 ${color} ${faded ? "opacity-35" : ""}`} key={index} />
+      ))}
+    </span>
+  );
+};
+
+const SquareRows = ({ count, filled, faded = 0, color, fadedFirst = false }) => {
+  const total = Math.max(Number(count || 0), 0);
+  const fadedCount = Math.min(Math.max(Number(faded || 0), 0), total);
+  const filledCount = Math.min(Math.max(Number(filled || 0), 0), total - fadedCount);
+  if (!total) {
+    return <span className="grid grid-cols-5 gap-1"><span className="h-3 w-3 rounded-sm border border-slate-700 bg-slate-900" /></span>;
+  }
+  return (
+    <span className="grid grid-cols-5 gap-1">
+      {Array.from({ length: total }, (_, index) => {
+        const isFaded = fadedFirst ? index < fadedCount : index >= filledCount && index < filledCount + fadedCount;
+        const isFilled = fadedFirst ? index >= fadedCount && index < fadedCount + filledCount : index < filledCount;
+        return (
+          <span
+            className={`h-3 w-3 rounded-sm border border-slate-700 ${isFilled ? color : isFaded ? `${color} opacity-35` : "bg-slate-900"}`}
+            key={index}
+          />
+        );
+      })}
+    </span>
+  );
+};
 
 const ElementSummary = ({ element, config }) => (
   <div className="mt-3 space-y-3">
@@ -345,7 +505,7 @@ const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, s
               {upgradeActions.map((upgradeAction) => (
                 <button className="rounded-md border border-slate-700 px-3 py-2 text-left text-sm hover:bg-slate-800" key={upgradeAction.upgrade_id} onClick={() => onSelectUpgrade(upgradeAction)} type="button">
                   <span className="font-semibold text-white">{upgradeAction.label}</span>
-                  <span className="block text-xs text-slate-500">{upgradeAction.cost_actions} action, {upgradeAction.cost_life} life</span>
+                  <ActionCostLine action={upgradeAction} />
                 </button>
               ))}
             </div>
@@ -376,6 +536,29 @@ const ElementIcon = ({ element, large = false }) => (
   >
     <Sprout className="text-slate-950" size={large ? 32 : 18} />
   </div>
+);
+
+const ActionIcon = ({ action }) => {
+  if (action?.element) return <ElementIcon element={action.element} />;
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-700 bg-slate-800">
+      <Flame className="text-orange-300" size={18} />
+    </div>
+  );
+};
+
+const ActionCostLine = ({ action }) => (
+  <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+    <CostChip className="text-teal-200" icon={<Zap size={12} />} value={action?.cost_actions || 0} />
+    <CostChip className="text-emerald-300" icon="◆" value={action?.cost_life || 0} />
+  </span>
+);
+
+const CostChip = ({ className, icon, value }) => (
+  <span className={`inline-flex items-center gap-1 rounded bg-slate-950 px-1.5 py-0.5 font-semibold ${className}`}>
+    {icon}
+    <span>{value}</span>
+  </span>
 );
 
 const ProductionLine = ({ production, stress, sustain }) => (
@@ -479,6 +662,7 @@ const HexTile = ({ config, tile, isSelected, onSelect }) => {
     ? hydrationColor(tile.hydration)
     : config?.terrains?.[tile.terrain]?.color || "#718096";
   const building = config?.buildings?.[tile.building];
+  const stress = tileStress(tile);
 
   return (
     <g className="cursor-pointer transition-opacity hover:opacity-80" onClick={onSelect}>
@@ -491,9 +675,9 @@ const HexTile = ({ config, tile, isSelected, onSelect }) => {
       {tile.terrain === "rock" ? <circle cx={x} cy={y} fill="#2d3748" r={HEX_SIZE * 0.5} /> : null}
       {tile.terrain === "forest" ? <path d={`M${x},${y - 8} L${x - 7},${y + 5} L${x + 7},${y + 5} Z`} fill="#1c4532" /> : null}
       {building ? <BuildingGlyph building={building} config={config} tile={tile} x={x} y={y} /> : null}
-      {(tile.stress > 0 || tile.terrain_stress > 0) ? (
+      {stress > 0 ? (
         <text fill="#fff" fontSize="12" fontWeight="bold" stroke="#000" strokeWidth="1" textAnchor="middle" x={x} y={y + 4}>
-          {"!".repeat(Math.max(tile.stress || 0, tile.terrain_stress || 0))}
+          {"!".repeat(stress)}
         </text>
       ) : null}
     </g>
@@ -550,11 +734,11 @@ const hydrationColor = (hydration) => {
   return colors[String(hydration)] || "#718096";
 };
 
-const formatBuilding = (tile, config) => {
-  if (!tile?.building) return "None";
-  const building = config?.buildings?.[tile.building]?.label || tile.building;
-  const upgrade = tile.building_upgrade ? config?.upgrades?.[tile.building_upgrade]?.label || tile.building_upgrade : "";
-  return upgrade ? `${upgrade} ${building}` : building;
+const tileStress = (tile) => {
+  if (!tile) return 0;
+  const buildingStress = Number(tile.stress || 0);
+  const terrainStress = tile.terrain && tile.terrain !== "neutral" ? Number(tile.terrain_stress || 0) : 0;
+  return Math.max(buildingStress, terrainStress);
 };
 
 const signed = (value) => (Number(value) > 0 ? `+${value}` : String(value));

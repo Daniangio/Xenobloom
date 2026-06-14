@@ -70,3 +70,18 @@ class TestGameEngine(unittest.TestCase):
 
         self.assertEqual(next_state["spent_life"], 0)
         self.assertEqual(engine._stress_for_tile(next_state["grid"]["1,0"]), 1)
+
+    def test_only_fully_dry_tiles_spread_drought(self):
+        engine = GameEngine()
+        state = engine.create_initial_state(seed=42)
+        for tile in state["grid"].values():
+            tile.update({"terrain": "neutral", "hydration": 0})
+
+        state["grid"]["0,0"]["hydration"] = -2
+        state["grid"]["1,0"]["hydration"] = 2
+        engine._resolve_drought(state, engine._rng_for(state, "test"))
+        self.assertEqual(state["grid"]["1,0"]["hydration"], 2)
+
+        state["grid"]["0,0"]["hydration"] = -3
+        engine._resolve_drought(state, engine._rng_for(state, "test"))
+        self.assertEqual(state["grid"]["1,0"]["hydration"], 1)
