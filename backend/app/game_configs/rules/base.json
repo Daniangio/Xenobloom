@@ -8,8 +8,11 @@
   "initial_forests": 3,
   "initial_moist_tiles": 5,
   "initial_drought_centers": 3,
+  "initial_nutrients_per_type": 2,
   "hydration_min": -3,
   "hydration_max": 3,
+  "strain_threshold": 5,
+  "strain_triplet_maturity_bonus": 10,
   "stress_collapse_threshold": 3,
   "core_start_q": 0,
   "core_start_r": 0

@@ -104,6 +104,9 @@ class GameStateResponse(BaseModel):
     wind_label: str
     actions_left: int
     maturity: int
+    strains: Dict[str, int]
+    strain_maturity: int
+    global_upgrades: Dict[str, bool]
     base_economy: Dict[str, Any]
     live_economy: Dict[str, Any]
     resources: Dict[str, Any]

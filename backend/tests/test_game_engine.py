@@ -78,7 +78,7 @@ class TestGameEngine(unittest.TestCase):
             tile.update({"terrain": "neutral", "hydration": 0, "building": None, "building_upgrade": None})
         state["grid"]["0,0"].update({"building": "condenser", "hydration": 0})
         state["grid"]["1,0"]["hydration"] = -3
-        state["grid"]["0,1"]["hydration"] = -2
+        state["grid"]["0,1"]["hydration"] = 0
 
         public_state = engine.public_state(state, selected_tile="0,0")
         effects = public_state["selected_element"]["effects"]
@@ -89,13 +89,68 @@ class TestGameEngine(unittest.TestCase):
 
         state["grid"]["0,0"]["building_upgrade"] = "condenser_heavy"
         state["grid"]["1,0"]["hydration"] = -3
-        state["grid"]["0,1"]["hydration"] = -2
+        state["grid"]["0,1"]["hydration"] = 0
         heavy_effects = engine._active_effects(state["grid"]["0,0"])
         hydration_effect = next(effect for effect in heavy_effects if effect["type"] == "hydration_push")
         self.assertEqual(hydration_effect["specs"]["iterations"], 2)
 
         engine._resolve_condensers(state, engine._rng_for(state, "test"))
         self.assertEqual(state["grid"]["1,0"]["hydration"], -1)
+
+    def test_nutrients_assimilators_and_strain_scoring(self):
+        engine = GameEngine()
+        state = engine.create_initial_state(seed=42)
+        nutrient_counts = {"green": 0, "blue": 0, "purple": 0}
+        for tile in state["grid"].values():
+            if tile.get("nutrient_type"):
+                nutrient_counts[tile["nutrient_type"]] += 1
+        self.assertEqual(nutrient_counts, {"green": 3, "blue": 3, "purple": 3})
+
+        for tile in state["grid"].values():
+            tile.update({"terrain": "neutral", "hydration": 0, "building": None, "building_upgrade": None, "nutrient_type": None, "extraction_progress": 0})
+        state["grid"]["0,0"]["building"] = "core"
+        state["grid"]["1,0"].update({"nutrient_type": "green", "building": "assimilator", "hydration": 0, "extraction_progress": 4})
+
+        engine._resolve_assimilators(
+            state,
+            engine._rng_for(state, "test"),
+            engine._connected_building_keys(state),
+            engine._global_upgrades(state),
+            [],
+        )
+
+        self.assertEqual(state["strains"]["green"], 1)
+        self.assertEqual(state["grid"]["1,0"]["extraction_progress"], 1)
+        self.assertEqual(engine._strain_maturity(state["strains"]), 1)
+
+    def test_disconnected_buildings_are_inactive_until_global_upgrade(self):
+        engine = GameEngine()
+        state = engine.create_initial_state(seed=42)
+        for tile in state["grid"].values():
+            tile.update({"terrain": "neutral", "hydration": 0, "building": None, "building_upgrade": None, "nutrient_type": None, "extraction_progress": 0})
+        state["grid"]["0,0"]["building"] = "core"
+        state["grid"]["3,0"].update({"building": "assimilator", "nutrient_type": "blue", "extraction_progress": 4})
+
+        self.assertEqual(engine.calculate_economy(state["grid"], state=state)["sustain"], 0)
+        engine._resolve_assimilators(
+            state,
+            engine._rng_for(state, "test"),
+            engine._connected_building_keys(state),
+            engine._global_upgrades(state),
+            [],
+        )
+        self.assertEqual(state["strains"]["blue"], 0)
+
+        state["global_upgrades"]["autonomous_assimilators"] = True
+        self.assertEqual(engine.calculate_economy(state["grid"], state=state)["sustain"], 1)
+        engine._resolve_assimilators(
+            state,
+            engine._rng_for(state, "test"),
+            engine._connected_building_keys(state),
+            engine._global_upgrades(state),
+            [],
+        )
+        self.assertEqual(state["strains"]["blue"], 1)
 
     def test_only_fully_dry_tiles_spread_drought(self):
         engine = GameEngine()

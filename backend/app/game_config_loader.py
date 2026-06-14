@@ -16,6 +16,7 @@ class GameConfigRepository:
         self.terrains = self._load_directory(root / "terrain")
         self.buildings = self._load_directory(root / "buildings")
         self.upgrades = self._load_directory(root / "upgrades")
+        self.global_upgrades = self._load_directory(root / "global_upgrades")
         self.tags = self._load_directory(root / "tags")
 
     def public_payload(self) -> dict[str, Any]:
@@ -24,6 +25,7 @@ class GameConfigRepository:
             "terrains": self.terrains,
             "buildings": self.buildings,
             "upgrades": self.upgrades,
+            "global_upgrades": self.global_upgrades,
             "tags": self.tags,
         }
 

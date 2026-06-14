@@ -16,6 +16,7 @@ DIRECTIONS = [
     {"q": 0, "r": -1, "name": "NW"},
     {"q": 1, "r": -1, "name": "NE"},
 ]
+NUTRIENT_TYPES = ("green", "blue", "purple")
 
 
 def hex_key(q: int, r: int) -> str:
@@ -61,6 +62,8 @@ class GameEngine:
                     "building_upgrade": None,
                     "stress": 0,
                     "terrain_stress": 0,
+                    "nutrient_type": None,
+                    "extraction_progress": 0,
                 }
 
         core_key = hex_key(int(self.rules["core_start_q"]), int(self.rules["core_start_r"]))
@@ -91,9 +94,22 @@ class GameEngine:
             int(self.rules["initial_drought_centers"]),
             lambda h: h.update({"hydration": int(self.rules["hydration_min"])}),
         )
+        nutrient_available = [
+            h for h in hexes
+            if h.get("building") is None
+            and h.get("terrain") != "rock"
+            and h.get("nutrient_type") is None
+            and hex_distance(0, 0, h["q"], h["r"]) >= 2
+        ]
+        for nutrient_type in NUTRIENT_TYPES:
+            self._assign_random(
+                nutrient_available,
+                rng,
+                int(self.rules["initial_nutrients_per_type"]),
+                lambda h, nutrient_type=nutrient_type: h.update({"nutrient_type": nutrient_type}),
+            )
 
-        base_economy = self.calculate_economy(grid)
-        return {
+        initial_state = {
             "schema_version": 1,
             "config_id": self.rules["id"],
             "seed": actual_seed,
@@ -104,18 +120,32 @@ class GameEngine:
             "wind_dir": rng.randrange(0, len(DIRECTIONS)),
             "actions_left": int(self.rules["actions_per_season"]),
             "maturity": 0,
-            "base_economy": base_economy,
+            "base_economy": {"prod": 0, "sustain": 0},
             "spent_life": 0,
+            "strains": {nutrient_type: 0 for nutrient_type in NUTRIENT_TYPES},
+            "global_upgrades": {
+                "composting": False,
+                "autonomous_assimilators": False,
+                "autonomous_connectors": False,
+                "autonomous_condensers": False,
+                "autonomous_blooms": False,
+            },
             "last_command_timestamp_ms": 0,
             "logs": ["Colony initialized."],
             "grid": grid,
         }
+        initial_state["base_economy"] = self.calculate_economy(grid, state=initial_state)
+        return {
+            **initial_state,
+        }
 
     def public_state(self, state: dict[str, Any], *, selected_tile: str | None = None) -> dict[str, Any]:
-        live_economy = self.calculate_economy(state["grid"])
+        live_economy = self.calculate_economy(state["grid"], state=state)
         base_economy = state.get("base_economy") or {"prod": 0, "sustain": 0}
         available_life = max(0, int(base_economy["prod"]) - int(base_economy["sustain"])) - int(state.get("spent_life") or 0)
         selected = state["grid"].get(selected_tile or "")
+        connected_keys = self._connected_building_keys(state)
+        strains = self._strain_counts(state)
         return {
             "revision": int(state.get("revision") or 0),
             "phase": state.get("phase", "IN_GAME"),
@@ -127,6 +157,9 @@ class GameEngine:
             "wind_label": DIRECTIONS[int(state.get("wind_dir") or 0)]["name"],
             "actions_left": int(state.get("actions_left") or 0),
             "maturity": int(state.get("maturity") or 0),
+            "strains": strains,
+            "strain_maturity": self._strain_maturity(strains),
+            "global_upgrades": self._global_upgrades(state),
             "base_economy": base_economy,
             "live_economy": live_economy,
             "resources": self._resource_summary(state, live_economy=live_economy),
@@ -135,7 +168,7 @@ class GameEngine:
             "grid": state["grid"],
             "config": self.config.public_payload(),
             "selected_tile": selected,
-            "selected_element": self._element_summary(selected) if selected else None,
+            "selected_element": self._element_summary(selected, state=state, connected_keys=connected_keys) if selected else None,
             "available_actions": self.available_actions(state, selected_tile=selected_tile),
         }
 
@@ -150,6 +183,12 @@ class GameEngine:
             self._apply_repair(next_state, command)
         elif command_type == "upgrade":
             self._apply_upgrade(next_state, command)
+        elif command_type == "global_upgrade":
+            self._apply_global_upgrade(next_state, command)
+        elif command_type == "dismantle":
+            self._apply_dismantle(next_state, command, compost=False)
+        elif command_type == "compost":
+            self._apply_dismantle(next_state, command, compost=True)
         elif command_type == "end_season":
             self._apply_end_season(next_state)
         else:
@@ -186,6 +225,16 @@ class GameEngine:
             upgrade_id = str(command.get("upgrade_id") or "")
             if not any(action["type"] == "upgrade" and action.get("upgrade_id") == upgrade_id for action in actions):
                 raise ValueError("Upgrade command is not legal.")
+        elif command_type == "global_upgrade":
+            upgrade_id = str(command.get("upgrade_id") or "")
+            if not any(action["type"] == "global_upgrade" and action.get("upgrade_id") == upgrade_id for action in actions):
+                raise ValueError("Global upgrade command is not legal.")
+        elif command_type == "dismantle":
+            if not any(action["type"] == "dismantle" for action in actions):
+                raise ValueError("Dismantle command is not legal.")
+        elif command_type == "compost":
+            if not any(action["type"] == "compost" for action in actions):
+                raise ValueError("Compost command is not legal.")
         else:
             raise ValueError("Unknown command type.")
 
@@ -225,6 +274,36 @@ class GameEngine:
         if hex_state.get("building") != "core" and int(hex_state.get("stress") or 0) > 0 and actions_left >= 1:
             actions.append({"type": "repair", "label": "Repair", "cost_actions": 1, "cost_life": 0})
 
+        if hex_state.get("building") != "core" and actions_left >= 1:
+            action_type = "compost" if self._global_upgrades(state).get("composting") else "dismantle"
+            actions.append(
+                {
+                    "type": action_type,
+                    "label": "Compost" if action_type == "compost" else "Dismantle",
+                    "cost_actions": 1,
+                    "cost_life": 0,
+                }
+            )
+
+        if hex_state.get("building") == "core":
+            active_globals = self._global_upgrades(state)
+            for upgrade_id, upgrade in self.config.global_upgrades.items():
+                if active_globals.get(upgrade_id):
+                    continue
+                cost_actions = int(upgrade.get("cost_actions") or 1)
+                cost_life = int(upgrade.get("cost_life") or 0)
+                if actions_left >= cost_actions and available_life >= cost_life:
+                    actions.append(
+                        {
+                            "type": "global_upgrade",
+                            "upgrade_id": upgrade_id,
+                            "label": upgrade["label"],
+                            "cost_life": cost_life,
+                            "cost_actions": cost_actions,
+                            "element": self._element_summary(hex_state, state=state),
+                        }
+                    )
+
         if hex_state.get("building_upgrade"):
             return actions
         building = self.config.buildings.get(str(hex_state.get("building") or ""))
@@ -249,12 +328,16 @@ class GameEngine:
                 )
         return actions
 
-    def calculate_economy(self, grid: dict[str, dict[str, Any]]) -> dict[str, int]:
+    def calculate_economy(self, grid: dict[str, dict[str, Any]], *, state: dict[str, Any] | None = None) -> dict[str, int]:
+        state_view = state or {"grid": grid, "global_upgrades": {}}
+        connected_keys = self._connected_building_keys(state_view)
         prod = 0
         sustain = 0
-        for hex_state in grid.values():
+        for key, hex_state in grid.items():
             building_id = hex_state.get("building")
             if not building_id:
+                continue
+            if not self._is_building_active(hex_state, key, connected_keys, self._global_upgrades(state_view)):
                 continue
             building = self.config.buildings.get(str(building_id), {})
             sustain += self._sustain_cost_for_tile(hex_state, building)
@@ -266,10 +349,11 @@ class GameEngine:
         building_type = str(command.get("building_type") or "")
         building = self.config.buildings[building_type]
         tile = state["grid"][tile_key]
-        tile.update({"building": building_type, "building_upgrade": None, "stress": 0})
+        tile.update({"building": building_type, "building_upgrade": None, "stress": 0, "extraction_progress": 0})
         state["actions_left"] = int(state["actions_left"]) - int(building.get("build_cost_actions") or 1)
         state["spent_life"] = int(state.get("spent_life") or 0) + int(building.get("build_cost_life") or 0)
-        self._add_log(state, f"Built {building['label']} at {tile['q']},{tile['r']}.")
+        nutrient = f" {str(tile.get('nutrient_type')).title()}" if building_type == "assimilator" and tile.get("nutrient_type") else ""
+        self._add_log(state, f"Built{nutrient} {building['label']} at {tile['q']},{tile['r']}.")
 
     def _apply_repair(self, state: dict[str, Any], command: dict[str, Any]) -> None:
         tile = state["grid"][str(command.get("tile_key") or "")]
@@ -288,6 +372,39 @@ class GameEngine:
         state["spent_life"] = int(state.get("spent_life") or 0) + int(upgrade.get("cost_life") or 0)
         self._add_log(state, f"Upgraded to {upgrade['label']} at {tile['q']},{tile['r']}.")
 
+    def _apply_global_upgrade(self, state: dict[str, Any], command: dict[str, Any]) -> None:
+        upgrade_id = str(command.get("upgrade_id") or "")
+        upgrade = self.config.global_upgrades[upgrade_id]
+        global_upgrades = self._global_upgrades(state)
+        global_upgrades[upgrade_id] = True
+        state["global_upgrades"] = global_upgrades
+        state["actions_left"] = int(state["actions_left"]) - int(upgrade.get("cost_actions") or 1)
+        state["spent_life"] = int(state.get("spent_life") or 0) + int(upgrade.get("cost_life") or 0)
+        self._add_log(state, f"Unlocked {upgrade['label']}.")
+
+    def _apply_dismantle(self, state: dict[str, Any], command: dict[str, Any], *, compost: bool) -> None:
+        tile = state["grid"][str(command.get("tile_key") or "")]
+        building_id = str(tile.get("building") or "")
+        building = self.config.buildings.get(building_id, {"label": building_id})
+        tile.update({"building": None, "building_upgrade": None, "stress": 0, "extraction_progress": 0})
+        state["actions_left"] = int(state["actions_left"]) - 1
+        if compost:
+            self._apply_compost_hydration(state, tile)
+            self._add_log(state, f"Composted {building['label']} at {tile['q']},{tile['r']}.")
+        else:
+            self._add_log(state, f"Dismantled {building['label']} at {tile['q']},{tile['r']}.")
+
+    def _apply_compost_hydration(self, state: dict[str, Any], tile: dict[str, Any]) -> None:
+        tile["hydration"] = self._clamp_hydration(int(tile["hydration"]) + 1, tile.get("terrain"))
+        candidates = []
+        for neighbor in neighbors(tile["q"], tile["r"]):
+            target = state["grid"].get(hex_key(neighbor["q"], neighbor["r"]))
+            if target:
+                candidates.append((int(target.get("hydration") or 0), neighbor["dir_index"], target))
+        candidates.sort(key=lambda item: (item[0], _angular_distance(item[1], int(state.get("wind_dir") or 0))))
+        for _, _, target in candidates[:2]:
+            target["hydration"] = self._clamp_hydration(int(target["hydration"]) + 1, target.get("terrain"))
+
     def _apply_end_season(self, state: dict[str, Any]) -> None:
         rng = self._rng_for(state, "end_season")
         turn_logs: list[str] = []
@@ -296,28 +413,33 @@ class GameEngine:
             state["wind_dir"] = rng.randrange(0, len(DIRECTIONS))
             turn_logs.append(f"Wind shifted to {DIRECTIONS[state['wind_dir']]['name']}.")
 
-        self._resolve_condensers(state, rng)
+        connected_keys = self._connected_building_keys(state)
+        global_upgrades = self._global_upgrades(state)
+        self._resolve_condensers(state, rng, connected_keys, global_upgrades)
         if season % 2 == 0:
             self._resolve_drought(state, rng)
             turn_logs.append("Drought replicated.")
 
-        projected_economy = self.calculate_economy(state["grid"])
+        projected_economy = self.calculate_economy(state["grid"], state=state)
         if projected_economy["sustain"] > projected_economy["prod"]:
             deficit = projected_economy["sustain"] - projected_economy["prod"]
             turn_logs.append(f"Deficit of {deficit} Life. Structures strained.")
             active_buildings = [
-                tile for tile in state["grid"].values()
-                if tile.get("building") and tile.get("building") != "core"
+                tile for key, tile in state["grid"].items()
+                if tile.get("building")
+                and tile.get("building") != "core"
+                and self._is_building_active(tile, key, connected_keys, global_upgrades)
             ]
             for _ in range(deficit):
                 if active_buildings:
                     rng.choice(active_buildings)["stress"] += 1
 
-        core_died = self._resolve_stress_and_maturity(state, turn_logs)
+        self._resolve_assimilators(state, rng, connected_keys, global_upgrades, turn_logs)
+        core_died = self._resolve_stress_and_maturity(state, connected_keys, global_upgrades, turn_logs)
         state["season"] = season + 1
         state["actions_left"] = int(self.rules["actions_per_season"])
         state["spent_life"] = 0
-        state["base_economy"] = self.calculate_economy(state["grid"])
+        state["base_economy"] = self.calculate_economy(state["grid"], state=state)
         for message in reversed(turn_logs):
             self._add_log(state, message)
 
@@ -331,9 +453,19 @@ class GameEngine:
             state["game_over"] = "lose"
             state["phase"] = "FINISHED"
 
-    def _resolve_condensers(self, state: dict[str, Any], rng: random.Random) -> None:
-        for tile in list(state["grid"].values()):
+    def _resolve_condensers(
+        self,
+        state: dict[str, Any],
+        rng: random.Random,
+        connected_keys: set[str] | None = None,
+        global_upgrades: dict[str, bool] | None = None,
+    ) -> None:
+        connected_keys = connected_keys if connected_keys is not None else self._connected_building_keys(state)
+        global_upgrades = global_upgrades or self._global_upgrades(state)
+        for key, tile in list(state["grid"].items()):
             if tile.get("building") != "condenser":
+                continue
+            if not self._is_building_active(tile, key, connected_keys, global_upgrades):
                 continue
             for effect in self._active_effects(tile):
                 if effect.get("type") != "hydration_push":
@@ -406,9 +538,80 @@ class GameEngine:
             else:
                 tile["hydration"] = self._clamp_hydration(int(tile["hydration"]) - 1, tile.get("terrain"))
 
-    def _resolve_stress_and_maturity(self, state: dict[str, Any], turn_logs: list[str]) -> bool:
+    def _resolve_assimilators(
+        self,
+        state: dict[str, Any],
+        rng: random.Random,
+        connected_keys: set[str],
+        global_upgrades: dict[str, bool],
+        turn_logs: list[str],
+    ) -> None:
+        produced: list[str] = []
+        for key, tile in state["grid"].items():
+            if tile.get("building") != "assimilator":
+                continue
+            if not self._is_building_active(tile, key, connected_keys, global_upgrades):
+                continue
+            nutrient_type = str(tile.get("nutrient_type") or "")
+            if nutrient_type not in NUTRIENT_TYPES:
+                continue
+            projection = self._assimilator_projection(state, tile)
+            if int(tile.get("hydration") or 0) <= int(projection["stress_hydration_max"]):
+                tile["stress"] = int(tile.get("stress") or 0) + int(projection["stress_value"])
+            rate = int(projection["rate"])
+            if rate <= 0:
+                continue
+            progress = int(tile.get("extraction_progress") or 0) + rate
+            threshold = int(projection["threshold"])
+            created = progress // threshold
+            tile["extraction_progress"] = progress % threshold
+            if created:
+                strains = self._strain_counts(state)
+                strains[nutrient_type] = int(strains.get(nutrient_type) or 0) + created
+                state["strains"] = strains
+                produced.extend([nutrient_type] * created)
+        if produced:
+            labels = [nutrient.title() for nutrient in produced]
+            turn_logs.append(f"{len(produced)} Strain{'s' if len(produced) != 1 else ''} produced this season: {' + '.join(labels)}.")
+
+    def _assimilator_projection(self, state: dict[str, Any], tile: dict[str, Any]) -> dict[str, int]:
+        effect = next((item for item in self._active_effects(tile) if item.get("type") == "strain_extraction"), {})
+        specs = effect.get("specs") or {}
+        open_neighbors = sum(
+            1
+            for neighbor in neighbors(tile["q"], tile["r"])
+            if not state["grid"].get(hex_key(neighbor["q"], neighbor["r"]), {}).get("building")
+        )
+        openness = specs.get("open_neighbors") or {}
+        high_min = int(openness.get("high_min") or 4)
+        medium_min = int(openness.get("medium_min") or 2)
+        if open_neighbors >= high_min:
+            openness_rate = int(openness.get("high_value") or 2)
+        elif open_neighbors >= medium_min:
+            openness_rate = int(openness.get("medium_value") or 1)
+        else:
+            openness_rate = 0
+        dry_penalty_hydration_max = int(specs.get("dry_penalty_hydration_max") or -1)
+        dry_penalty = int(specs.get("dry_penalty") or 1) if int(tile.get("hydration") or 0) <= dry_penalty_hydration_max else 0
+        return {
+            "open_neighbors": open_neighbors,
+            "openness_rate": openness_rate,
+            "dry_penalty": dry_penalty,
+            "rate": max(0, openness_rate - dry_penalty),
+            "threshold": int(specs.get("threshold") or self.rules["strain_threshold"]),
+            "stress_hydration_max": int(specs.get("stress_hydration_max") or -2),
+            "stress_value": int(specs.get("stress_value") or 1),
+        }
+
+    def _resolve_stress_and_maturity(
+        self,
+        state: dict[str, Any],
+        connected_keys: set[str],
+        global_upgrades: dict[str, bool],
+        turn_logs: list[str],
+    ) -> bool:
         core_died = False
-        for tile in state["grid"].values():
+        for key, tile in state["grid"].items():
             if tile.get("terrain") == "forest":
                 forest = self.config.terrains["forest"]
                 if int(tile["hydration"]) <= int(forest["wither_hydration_max"]):
@@ -422,16 +625,22 @@ class GameEngine:
             if not building_id:
                 continue
             building = self.config.buildings[str(building_id)]
-            stress_added = self._stress_for_tile(tile)
+            active = self._is_building_active(tile, key, connected_keys, global_upgrades)
+            stress_added = self._stress_for_tile(tile) if active else 0
             if stress_added:
                 tile["stress"] = int(tile.get("stress") or 0) + stress_added
             if int(tile.get("stress") or 0) >= int(self.rules["stress_collapse_threshold"]):
                 if building_id == "core":
                     core_died = True
                 turn_logs.append(f"{building['label']} at {tile['q']},{tile['r']} collapsed.")
-                tile.update({"building": None, "building_upgrade": None, "stress": 0})
+                tile.update({"building": None, "building_upgrade": None, "stress": 0, "extraction_progress": 0})
                 continue
-            state["maturity"] = int(state.get("maturity") or 0) + self._production_for_tile(tile).get("maturity", 0)
+            if active:
+                state["maturity"] = int(state.get("maturity") or 0) + self._production_for_tile(tile).get("maturity", 0)
+        strain_maturity = self._strain_maturity(self._strain_counts(state))
+        if strain_maturity:
+            state["maturity"] = int(state.get("maturity") or 0) + strain_maturity
+            turn_logs.append(f"Strains generated {strain_maturity} Maturity.")
         return core_died
 
     def _can_build_on(self, state: dict[str, Any], tile: dict[str, Any], building: dict[str, Any]) -> bool:
@@ -441,9 +650,18 @@ class GameEngine:
             return False
         if building.get("requires_hydration_min") is not None and int(tile.get("hydration") or 0) < int(building["requires_hydration_min"]):
             return False
+        if building.get("requires_nutrient") and not tile.get("nutrient_type"):
+            return False
         if building.get("requires_adjacent_colony"):
+            connected_keys = self._connected_building_keys(state)
+            global_upgrades = self._global_upgrades(state)
             return any(
-                state["grid"].get(hex_key(neighbor["q"], neighbor["r"]), {}).get("building") is not None
+                self._is_building_active(
+                    state["grid"].get(hex_key(neighbor["q"], neighbor["r"]), {}),
+                    hex_key(neighbor["q"], neighbor["r"]),
+                    connected_keys,
+                    global_upgrades,
+                )
                 for neighbor in neighbors(tile["q"], tile["r"])
             )
         return True
@@ -469,22 +687,47 @@ class GameEngine:
             },
         }
 
-    def _element_summary(self, tile: dict[str, Any] | None) -> dict[str, Any] | None:
+    def _element_summary(
+        self,
+        tile: dict[str, Any] | None,
+        *,
+        state: dict[str, Any] | None = None,
+        connected_keys: set[str] | None = None,
+    ) -> dict[str, Any] | None:
         if not tile:
             return None
         building_id = tile.get("building")
         if building_id:
             building = self.config.buildings.get(str(building_id), {})
+            active = True
+            extraction = None
+            if state is not None:
+                key = hex_key(int(tile.get("q") or 0), int(tile.get("r") or 0))
+                connected = connected_keys if connected_keys is not None else self._connected_building_keys(state)
+                active = self._is_building_active(tile, key, connected, self._global_upgrades(state))
+                if building_id == "assimilator":
+                    projection = self._assimilator_projection(state, tile)
+                    extraction = {
+                        "progress": int(tile.get("extraction_progress") or 0),
+                        "threshold": int(projection["threshold"]),
+                        "projected_rate": int(projection["rate"]) if active else 0,
+                        "open_neighbors": int(projection["open_neighbors"]),
+                        "openness_rate": int(projection["openness_rate"]),
+                        "dry_penalty": int(projection["dry_penalty"]),
+                    }
             return {
                 "kind": "building",
                 "id": building_id,
                 "label": building.get("label", building_id),
                 "color": building.get("color", "#94a3b8"),
                 "tags": building.get("tags", []),
+                "active": active,
+                "nutrient_type": tile.get("nutrient_type"),
+                "extraction": extraction,
                 "sustain_cost": self._sustain_cost_for_tile(tile, building),
                 "effects": self._active_effects(tile),
-                "current_production": self._production_for_tile(tile),
-                "current_stress": self._stress_for_tile(tile),
+                "current_production": self._production_for_tile(tile) if active else {},
+                "current_stress": self._stress_for_tile(tile) if active else 0,
             }
         terrain_id = tile.get("terrain")
         terrain = self.config.terrains.get(str(terrain_id or ""), {})
@@ -560,6 +803,66 @@ class GameEngine:
         if condition_id == "building":
             return tile.get("building")
         return tile.get(condition_id)
+
+    def _connected_building_keys(self, state: dict[str, Any]) -> set[str]:
+        grid = state.get("grid") or {}
+        core_key = hex_key(int(self.rules["core_start_q"]), int(self.rules["core_start_r"]))
+        connected: set[str] = set()
+        queue = [core_key]
+        while queue:
+            key = queue.pop(0)
+            if key in connected:
+                continue
+            tile = grid.get(key)
+            if not tile or not tile.get("building"):
+                continue
+            connected.add(key)
+            for neighbor in neighbors(tile["q"], tile["r"]):
+                neighbor_key = hex_key(neighbor["q"], neighbor["r"])
+                if neighbor_key not in connected and grid.get(neighbor_key, {}).get("building"):
+                    queue.append(neighbor_key)
+        return connected
+
+    def _is_building_active(
+        self,
+        tile: dict[str, Any],
+        key: str,
+        connected_keys: set[str],
+        global_upgrades: dict[str, bool],
+    ) -> bool:
+        building_id = str(tile.get("building") or "")
+        if not building_id:
+            return False
+        if key in connected_keys:
+            return True
+        autonomous_map = {
+            "assimilator": "autonomous_assimilators",
+            "connector": "autonomous_connectors",
+            "condenser": "autonomous_condensers",
+            "bloom": "autonomous_blooms",
+        }
+        upgrade_id = autonomous_map.get(building_id)
+        return bool(upgrade_id and global_upgrades.get(upgrade_id))
+
+    def _global_upgrades(self, state: dict[str, Any]) -> dict[str, bool]:
+        values = {
+            "composting": False,
+            "autonomous_assimilators": False,
+            "autonomous_connectors": False,
+            "autonomous_condensers": False,
+            "autonomous_blooms": False,
+        }
+        values.update({str(key): bool(value) for key, value in (state.get("global_upgrades") or {}).items()})
+        return values
+
+    def _strain_counts(self, state: dict[str, Any]) -> dict[str, int]:
+        source = state.get("strains") or {}
+        return {nutrient_type: int(source.get(nutrient_type) or 0) for nutrient_type in NUTRIENT_TYPES}
+
+    def _strain_maturity(self, strains: dict[str, int]) -> int:
+        triplets = min(int(strains.get("green") or 0), int(strains.get("blue") or 0), int(strains.get("purple") or 0))
+        quadratic = sum(int(strains.get(nutrient_type) or 0) ** 2 for nutrient_type in NUTRIENT_TYPES)
+        return quadratic + triplets * int(self.rules["strain_triplet_maturity_bonus"])
 
     def _is_forest_aura(self, state: dict[str, Any], tile: dict[str, Any]) -> bool:
         if tile.get("terrain") == "forest":

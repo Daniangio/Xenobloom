@@ -26,6 +26,11 @@ const WIND_ROTATION = {
   NW: 330,
   NE: 30,
 };
+const NUTRIENT_COLORS = {
+  green: "#48bb78",
+  blue: "#4299e1",
+  purple: "#9f7aea",
+};
 
 const GameRoomPage = () => {
   const { roomId } = useParams();
@@ -121,7 +126,7 @@ const GameRoomPage = () => {
   };
 
   const openActionDetails = (action) => {
-    if (action.type === "repair") {
+    if (["repair", "dismantle", "compost"].includes(action.type)) {
       void submitCommand(commandFromAction(action, selectedTileKey));
       return;
     }
@@ -148,6 +153,7 @@ const GameRoomPage = () => {
                 <BipolarStat icon={<Droplets size={15} />} label="Hydration" value={selectedTile.hydration} range={HYDRATION_RANGE} />
                 <PositiveStat icon={<Flame size={15} />} label="Stress" value={tileStress(selectedTile)} range={STRESS_RANGE} />
                 <div className="text-sm capitalize text-slate-400">Terrain: {selectedTile.terrain}</div>
+                {selectedTile.nutrient_type ? <NutrientPill nutrientType={selectedTile.nutrient_type} /> : null}
               </div>
             ) : (
               <p className="mt-3 text-sm text-slate-400">Select a tile on the board.</p>
@@ -237,6 +243,7 @@ const GameRoomPage = () => {
           onSelectUpgrade={(action) => setDetailContext({ mode: "action", action, element: action.element, parentElement: detailContext.element })}
           submit={() => submitCommand(commandFromAction(detailContext.action, selectedTileKey))}
           upgradeActions={(gameState?.available_actions || []).filter((action) => action.type === "upgrade")}
+          globalUpgradeActions={(gameState?.available_actions || []).filter((action) => action.type === "global_upgrade")}
         />
       ) : null}
     </main>
@@ -248,6 +255,7 @@ const TopBoardPanel = ({ gameState, busy, submitCommand, endGame }) => {
     <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center justify-start gap-2 rounded-lg border border-slate-800 bg-slate-950/95 p-2 shadow-xl">
       <CompactStat icon={<Activity size={14} />} label="Season" value={`${gameState?.season || "-"} / ${gameState?.max_seasons || "-"}`} />
       <CompactStat icon={<Leaf size={14} />} label="Maturity" value={`${gameState?.maturity || 0} / ${gameState?.target_maturity || "-"}`} />
+      <StrainPanel gameState={gameState} />
       <button
         className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-white disabled:opacity-50"
         disabled={busy || !gameState}
@@ -277,6 +285,28 @@ const CompactStat = ({ icon, label, value }) => (
     </span>
   </div>
 );
+
+const StrainPanel = ({ gameState }) => {
+  const strains = gameState?.strains || {};
+  const triplets = Math.min(Number(strains.green || 0), Number(strains.blue || 0), Number(strains.purple || 0));
+  return (
+    <div className="flex items-center gap-2 rounded-md bg-slate-900 px-2 py-1.5">
+      <span>
+        <span className="block text-[10px] uppercase tracking-[0.12em] text-slate-500">Strains</span>
+        <span className="mt-1 flex items-center gap-2">
+          {["green", "blue", "purple"].map((nutrientType) => (
+            <span className="flex items-center gap-1 text-xs font-semibold text-white" key={nutrientType}>
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: NUTRIENT_COLORS[nutrientType] }} />
+              {Number(strains[nutrientType] || 0)}
+            </span>
+          ))}
+          <span className="text-xs font-semibold text-lime-300">+{gameState?.strain_maturity || 0}</span>
+          <span className="text-[10px] text-slate-500">T{triplets}</span>
+        </span>
+      </span>
+    </div>
+  );
+};
 
 const WindField = ({ windLabel }) => {
   const angle = (WIND_ROTATION[windLabel] ?? 90) - 90;
@@ -457,11 +487,44 @@ const ElementSummary = ({ element, config }) => (
       </div>
     </div>
     <TagList config={config} tags={element.tags || []} />
+    {element.nutrient_type ? <NutrientPill nutrientType={element.nutrient_type} /> : null}
+    {element.extraction ? <ExtractionProgress extraction={element.extraction} nutrientType={element.nutrient_type} /> : null}
+    {element.active === false ? <p className="text-xs font-semibold text-amber-300">Inactive: disconnected from Core</p> : null}
     <ProductionLine production={element.current_production || {}} stress={element.current_stress || 0} sustain={element.sustain_cost || 0} />
   </div>
 );
 
-const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, submit, upgradeActions, onSelectUpgrade }) => {
+const NutrientPill = ({ nutrientType }) => (
+  <div className="flex items-center gap-2 text-xs font-semibold capitalize text-slate-300">
+    <span className="h-3 w-3 rounded-full" style={{ backgroundColor: NUTRIENT_COLORS[nutrientType] || "#94a3b8" }} />
+    {nutrientType} nutrient
+  </div>
+);
+
+const ExtractionProgress = ({ extraction, nutrientType }) => (
+  <div className="space-y-1">
+    <div className="flex items-center justify-between text-xs text-slate-400">
+      <span>Extraction</span>
+      <span className="font-semibold text-white">{extraction.progress} / {extraction.threshold}</span>
+    </div>
+    <div className="h-2 overflow-hidden rounded bg-slate-950">
+      <div
+        className="h-full rounded"
+        style={{
+          backgroundColor: NUTRIENT_COLORS[nutrientType] || "#9f7aea",
+          width: `${Math.min(100, (Number(extraction.progress || 0) / Math.max(1, Number(extraction.threshold || 1))) * 100)}%`,
+        }}
+      />
+    </div>
+    <div className="flex flex-wrap gap-1 text-[10px] text-slate-400">
+      <span className="rounded bg-slate-950 px-1.5 py-0.5">Next +{extraction.projected_rate}</span>
+      <span className="rounded bg-slate-950 px-1.5 py-0.5">Open +{extraction.openness_rate}</span>
+      {extraction.dry_penalty ? <span className="rounded bg-slate-950 px-1.5 py-0.5 text-rose-300">Dry -{extraction.dry_penalty}</span> : null}
+    </div>
+  </div>
+);
+
+const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, submit, upgradeActions, globalUpgradeActions, onSelectUpgrade }) => {
   const element = context.element;
   const action = context.action;
   const isAction = context.mode === "action";
@@ -475,6 +538,7 @@ const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, s
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal-200">{isAction ? "Preview" : "Details"}</p>
               <h2 className="mt-1 text-2xl font-semibold text-white">{element?.label || action?.label}</h2>
               <TagList config={config} tags={element?.tags || []} />
+              {element?.nutrient_type ? <NutrientPill nutrientType={element.nutrient_type} /> : null}
             </div>
           </div>
           <button className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white" onClick={onClose} type="button">
@@ -485,7 +549,9 @@ const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, s
         <div className="mt-5 grid gap-4 md:grid-cols-[1fr_1.3fr]">
           <div className="rounded-md border border-slate-800 bg-slate-900 p-4">
             <h3 className="font-semibold text-white">Current Output</h3>
+            {element?.active === false ? <p className="mt-3 text-xs font-semibold text-amber-300">Inactive: disconnected from Core</p> : null}
             <ProductionLine production={element?.current_production || {}} stress={element?.current_stress || 0} sustain={element?.sustain_cost || 0} />
+            {element?.extraction ? <ExtractionProgress extraction={element.extraction} nutrientType={element.nutrient_type} /> : null}
           </div>
           <div className="rounded-md border border-slate-800 bg-slate-900 p-4">
             <h3 className="font-semibold text-white">Rules</h3>
@@ -500,9 +566,23 @@ const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, s
 
         {context.mode === "element" && upgradeActions.length ? (
           <div className="mt-5 rounded-md border border-slate-800 bg-slate-900 p-4">
-            <h3 className="font-semibold text-white">Upgrades</h3>
+            <h3 className="font-semibold text-white">{element?.id === "core" ? "Core Upgrade" : "Upgrades"}</h3>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {upgradeActions.map((upgradeAction) => (
+                <button className="rounded-md border border-slate-700 px-3 py-2 text-left text-sm hover:bg-slate-800" key={upgradeAction.upgrade_id} onClick={() => onSelectUpgrade(upgradeAction)} type="button">
+                  <span className="font-semibold text-white">{upgradeAction.label}</span>
+                  <ActionCostLine action={upgradeAction} />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {context.mode === "element" && globalUpgradeActions.length ? (
+          <div className="mt-5 rounded-md border border-slate-800 bg-slate-900 p-4">
+            <h3 className="font-semibold text-white">Global Upgrade</h3>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {globalUpgradeActions.map((upgradeAction) => (
                 <button className="rounded-md border border-slate-700 px-3 py-2 text-left text-sm hover:bg-slate-800" key={upgradeAction.upgrade_id} onClick={() => onSelectUpgrade(upgradeAction)} type="button">
                   <span className="font-semibold text-white">{upgradeAction.label}</span>
                   <ActionCostLine action={upgradeAction} />
@@ -520,7 +600,7 @@ const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, s
               </button>
             ) : null}
             <button className="rounded-md bg-teal-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-300 disabled:opacity-60" disabled={busy} onClick={submit} type="button">
-              Confirm {action?.type === "build" ? "Build" : "Upgrade"}
+              Confirm {actionLabel(action)}
             </button>
           </div>
         ) : null}
@@ -532,7 +612,7 @@ const ElementDetailModal = ({ context, config, busy, onClose, onBackToElement, s
 const ElementIcon = ({ element, large = false }) => (
   <div
     className={`${large ? "h-20 w-20" : "h-10 w-10"} flex shrink-0 items-center justify-center rounded-md border border-slate-700`}
-    style={{ backgroundColor: element?.color || "#334155" }}
+    style={{ backgroundColor: element?.nutrient_type ? NUTRIENT_COLORS[element.nutrient_type] : element?.color || "#334155" }}
   >
     <Sprout className="text-slate-950" size={large ? 32 : 18} />
   </div>
@@ -589,9 +669,9 @@ const TagList = ({ tags, config }) => {
 const EffectRule = ({ effect }) => (
   <div className="rounded-md bg-slate-950 px-3 py-2 text-xs">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="font-semibold capitalize text-slate-200">{effect.type}</span>
+      <span className="font-semibold capitalize text-slate-200">{formatEffectType(effect.type)}</span>
       <span className={effect.type === "stress" ? "text-rose-300" : "text-emerald-300"}>
-        {effect.specs?.resource ? `${effect.specs.resource} ` : ""}{signed(effect.specs?.value || 0)}
+        {effectSummary(effect)}
       </span>
     </div>
     <ConditionChips conditions={effect.specs?.conditions || {}} />
@@ -672,6 +752,16 @@ const HexTile = ({ config, tile, isSelected, onSelect }) => {
         stroke={isSelected ? "#fbbf24" : "#0f172a"}
         strokeWidth={isSelected ? 3 : 1}
       />
+      {tile.nutrient_type ? (
+        <circle
+          cx={x + HEX_SIZE * 0.43}
+          cy={y - HEX_SIZE * 0.42}
+          fill={NUTRIENT_COLORS[tile.nutrient_type] || "#9f7aea"}
+          r={HEX_SIZE * 0.16}
+          stroke="#0f172a"
+          strokeWidth="1.5"
+        />
+      ) : null}
       {tile.terrain === "rock" ? <circle cx={x} cy={y} fill="#2d3748" r={HEX_SIZE * 0.5} /> : null}
       {tile.terrain === "forest" ? <path d={`M${x},${y - 8} L${x - 7},${y + 5} L${x + 7},${y + 5} Z`} fill="#1c4532" /> : null}
       {building ? <BuildingGlyph building={building} config={config} tile={tile} x={x} y={y} /> : null}
@@ -686,13 +776,23 @@ const HexTile = ({ config, tile, isSelected, onSelect }) => {
 
 const BuildingGlyph = ({ building, config, tile, x, y }) => {
   const tags = (building.tags || []).slice(0, 2);
+  const buildingColor = tile.building === "assimilator" && tile.nutrient_type ? NUTRIENT_COLORS[tile.nutrient_type] : building.color;
   const tagRects = tags.map((tagId, index) => (
     <rect fill={config?.tags?.[tagId]?.color || "#94a3b8"} height="4" key={tagId} rx="1" width="7" x={x - 8 + index * 9} y={y + 12} />
   ));
+  if (building.shape === "triangle") {
+    return (
+      <g>
+        <path d={`M${x},${y - HEX_SIZE * 0.42} L${x - HEX_SIZE * 0.4},${y + HEX_SIZE * 0.28} L${x + HEX_SIZE * 0.4},${y + HEX_SIZE * 0.28} Z`} fill={buildingColor} />
+        <circle cx={x} cy={y} fill="#0f172a" r={HEX_SIZE * 0.13} />
+        {tagRects}
+      </g>
+    );
+  }
   if (building.shape === "square") {
     return (
       <g>
-        <rect fill={building.color} height={HEX_SIZE * 0.62} width={HEX_SIZE * 0.62} x={x - HEX_SIZE * 0.31} y={y - HEX_SIZE * 0.31} />
+        <rect fill={buildingColor} height={HEX_SIZE * 0.62} width={HEX_SIZE * 0.62} x={x - HEX_SIZE * 0.31} y={y - HEX_SIZE * 0.31} />
         {tile.building_upgrade ? <circle cx={x} cy={y} fill="#2b6cb0" r={HEX_SIZE * 0.18} /> : null}
         {tagRects}
       </g>
@@ -701,14 +801,14 @@ const BuildingGlyph = ({ building, config, tile, x, y }) => {
   if (building.shape === "diamond") {
     return (
       <g>
-        <rect fill={building.color} height={HEX_SIZE * 0.5} transform={`rotate(45 ${x} ${y})`} width={HEX_SIZE * 0.5} x={x - HEX_SIZE * 0.25} y={y - HEX_SIZE * 0.25} />
+        <rect fill={buildingColor} height={HEX_SIZE * 0.5} transform={`rotate(45 ${x} ${y})`} width={HEX_SIZE * 0.5} x={x - HEX_SIZE * 0.25} y={y - HEX_SIZE * 0.25} />
         {tagRects}
       </g>
     );
   }
   return (
     <g>
-      <circle cx={x} cy={y} fill={building.color} r={HEX_SIZE * 0.42} />
+      <circle cx={x} cy={y} fill={buildingColor} r={HEX_SIZE * 0.42} />
       {tile.building_upgrade ? <circle cx={x} cy={y} fill="#0f172a" r={HEX_SIZE * 0.18} /> : null}
       {tagRects}
     </g>
@@ -718,7 +818,16 @@ const BuildingGlyph = ({ building, config, tile, x, y }) => {
 const commandFromAction = (action, tileKey) => {
   if (action.type === "build") return { type: "build", tile_key: tileKey, building_type: action.building_type };
   if (action.type === "upgrade") return { type: "upgrade", tile_key: tileKey, upgrade_id: action.upgrade_id };
+  if (action.type === "global_upgrade") return { type: "global_upgrade", tile_key: tileKey, upgrade_id: action.upgrade_id };
+  if (action.type === "dismantle") return { type: "dismantle", tile_key: tileKey };
+  if (action.type === "compost") return { type: "compost", tile_key: tileKey };
   return { type: action.type, tile_key: tileKey };
+};
+
+const actionLabel = (action) => {
+  if (action?.type === "build") return "Build";
+  if (action?.type === "global_upgrade") return "Unlock";
+  return "Upgrade";
 };
 
 const hydrationColor = (hydration) => {
@@ -739,6 +848,17 @@ const tileStress = (tile) => {
   const buildingStress = Number(tile.stress || 0);
   const terrainStress = tile.terrain && tile.terrain !== "neutral" ? Number(tile.terrain_stress || 0) : 0;
   return Math.max(buildingStress, terrainStress);
+};
+
+const formatEffectType = (type) => String(type || "").replaceAll("_", " ");
+
+const effectSummary = (effect) => {
+  const specs = effect?.specs || {};
+  if (effect?.type === "production") return `${specs.resource || "life"} ${signed(specs.value || 0)}`;
+  if (effect?.type === "stress") return signed(specs.value || 0);
+  if (effect?.type === "hydration_push") return `+${specs.value || 1} x${specs.iterations || 1}`;
+  if (effect?.type === "strain_extraction") return `threshold ${specs.threshold || 5}`;
+  return specs.value !== undefined ? signed(specs.value) : "";
 };
 
 const signed = (value) => (Number(value) > 0 ? `+${value}` : String(value));

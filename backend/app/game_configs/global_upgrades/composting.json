@@ -1,0 +1,7 @@
+{
+  "id": "composting",
+  "label": "Composting Instinct",
+  "cost_life": 4,
+  "cost_actions": 1,
+  "effect": "compost_dismantle"
+}

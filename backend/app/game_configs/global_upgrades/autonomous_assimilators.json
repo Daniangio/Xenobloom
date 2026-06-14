@@ -1,0 +1,8 @@
+{
+  "id": "autonomous_assimilators",
+  "label": "Autonomous Assimilators",
+  "cost_life": 5,
+  "cost_actions": 1,
+  "effect": "autonomous_building_type",
+  "building_type": "assimilator"
+}

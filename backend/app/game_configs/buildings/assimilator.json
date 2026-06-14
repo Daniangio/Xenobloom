@@ -1,0 +1,32 @@
+{
+  "id": "assimilator",
+  "label": "Assimilator",
+  "shape": "triangle",
+  "color": "#9f7aea",
+  "tags": ["Nutrient", "Producer"],
+  "build_cost_life": 1,
+  "build_cost_actions": 1,
+  "requires_adjacent_colony": true,
+  "requires_nutrient": true,
+  "sustain_cost": 1,
+  "effects": [
+    {
+      "id": "assimilator_extract_strain",
+      "type": "strain_extraction",
+      "specs": {
+        "threshold": 5,
+        "open_neighbors": {
+          "high_min": 4,
+          "high_value": 2,
+          "medium_min": 2,
+          "medium_value": 1
+        },
+        "dry_penalty_hydration_max": -1,
+        "dry_penalty": 1,
+        "stress_hydration_max": -2,
+        "stress_value": 1
+      }
+    }
+  ],
+  "upgrade_ids": []
+}
