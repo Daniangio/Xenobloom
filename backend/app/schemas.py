@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
+
+
+class UserPublic(BaseModel):
+    id: str
+    username: str
+    email: Optional[str] = None
+    is_admin: bool = False
+    online: bool = False
+
+
+class PlayerProfile(BaseModel):
+    user: UserPublic
+    is_self: bool = False
+    friend_status: str = "none"
+    friends_count: int = 0
+
+
+class FriendUserSummary(BaseModel):
+    id: str
+    username: str
+
+
+class FriendRequestCreate(BaseModel):
+    username: Optional[str] = None
+    target_user_id: Optional[str] = None
+
+
+class FriendRequestRespond(BaseModel):
+    accept: bool
+
+
+class FriendListEntry(BaseModel):
+    user: FriendUserSummary
+    since: Optional[datetime] = None
+
+
+class PendingFriendRequestEntry(BaseModel):
+    request_id: str
+    user: FriendUserSummary
+    created_at: datetime
+
+
+class FriendsSummaryResponse(BaseModel):
+    friends: List[FriendListEntry]
+    incoming_requests: List[PendingFriendRequestEntry]
+    outgoing_requests: List[PendingFriendRequestEntry]
+
+
+class SessionStateResponse(BaseModel):
+    user_id: str
+
+
+class LobbyStateResponse(BaseModel):
+    users: List[UserPublic]
+
+
+class AuthMeResponse(BaseModel):
+    uid: str
+    email: Optional[str] = None
+    username: str
+    auth_provider: Optional[str] = None
+    player_exists: bool
+    is_admin: bool = False
+
+
+class AdminUserSummary(BaseModel):
+    id: str
+    username: str
+    email: Optional[str] = None
+    is_admin: bool
+    online: bool = False
+
+
+class AdminUserAdminUpdate(BaseModel):
+    is_admin: bool
+
+
+class AdminUserDetail(BaseModel):
+    user: UserPublic
+    friends_count: int = 0
+    incoming_requests_count: int = 0
+    outgoing_requests_count: int = 0
+
+
+class AdminMutationStatus(BaseModel):
+    status: str
+    message: Optional[str] = None
+
+
+class AdminAuditLogEntry(BaseModel):
+    id: str
+    admin_user_id: str
+    admin_username: str
+    action: str
+    target_type: str
+    target_id: str
+    payload: Dict[str, Any]
+    created_at: datetime

@@ -1,0 +1,243 @@
+import { useCallback, useEffect, useRef } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import GlobalChatOverlay from "../components/GlobalChatOverlay.jsx";
+import {
+  ensureFirebasePersistence,
+  signOutFirebase,
+  subscribeToIdTokenChanges,
+} from "../lib/firebase.js";
+import AdminPage from "../pages/AdminPage.jsx";
+import AuthPage from "../pages/AuthPage.jsx";
+import FriendsPage from "../pages/FriendsPage.jsx";
+import LobbyPage from "../pages/LobbyPage.jsx";
+import ProfilePage from "../pages/ProfilePage.jsx";
+import { useStore } from "../store.js";
+import { buildWsUrl } from "../utils/connection.js";
+
+const StateGuard = ({ children }) => {
+  const { token, authBootstrapped } = useStore();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (!authBootstrapped) return;
+    const isOnAuth = location.pathname === "/auth";
+    if (!token && !isOnAuth) {
+      navigate("/auth", { replace: true });
+      return;
+    }
+    if (token && isOnAuth) {
+      navigate("/lobby", { replace: true });
+    }
+  }, [authBootstrapped, token, location.pathname, navigate]);
+
+  if (!authBootstrapped) {
+    return <div className="flex min-h-screen items-center justify-center">Restoring session...</div>;
+  }
+
+  return children;
+};
+
+function AppContent() {
+  const {
+    token,
+    authBootstrapped,
+    connectionIssue,
+    clearAuth,
+    fetchAuthMe,
+    fetchSessionState,
+    handleAuthSuccess,
+    handleChatChannels,
+    handleChatDirectStarted,
+    handleChatHistory,
+    handleChatMessage,
+    handleError,
+    setAuthBootstrapped,
+    setAuthSession,
+    setConnectionIssue,
+    setConnectionStatus,
+    setSendMessage,
+  } = useStore();
+  const socketRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+
+  const disconnect = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    const socket = socketRef.current;
+    socketRef.current = null;
+    setSendMessage(null);
+    setConnectionStatus(false);
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.close(1000, "client disconnect");
+    }
+  }, [setConnectionStatus, setSendMessage]);
+
+  const handleSocketMessage = useCallback(
+    (message) => {
+      const type = message?.type;
+      const payload = message?.payload || {};
+      if (type === "auth_success" || type === "guest_auth_success") {
+        handleAuthSuccess(payload);
+      } else if (type === "chat_channels") {
+        handleChatChannels(payload);
+      } else if (type === "chat_history") {
+        handleChatHistory(payload);
+      } else if (type === "chat_message") {
+        handleChatMessage(payload);
+      } else if (type === "chat_direct_started") {
+        handleChatDirectStarted(payload);
+      } else if (type === "error" || type === "auth_error") {
+        handleError(payload);
+      }
+    },
+    [
+      handleAuthSuccess,
+      handleChatChannels,
+      handleChatDirectStarted,
+      handleChatHistory,
+      handleChatMessage,
+      handleError,
+    ]
+  );
+
+  const connect = useCallback(
+    (accessToken) => {
+      if (!accessToken || socketRef.current) return;
+      const socket = new WebSocket(buildWsUrl("/ws", { token: accessToken }));
+      socketRef.current = socket;
+      setConnectionIssue("Connecting...");
+
+      socket.onopen = () => {
+        setConnectionStatus(true);
+        setConnectionIssue("");
+        setSendMessage((message) => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(message));
+          }
+        });
+        socket.send(JSON.stringify({ action: "request_chat_channels", payload: {} }));
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          handleSocketMessage(JSON.parse(event.data));
+        } catch (error) {
+          console.warn("Invalid websocket message.", error);
+        }
+      };
+
+      socket.onclose = () => {
+        if (socketRef.current !== socket) return;
+        socketRef.current = null;
+        setSendMessage(null);
+        setConnectionStatus(false);
+        if (accessToken) {
+          setConnectionIssue("Disconnected. Reconnecting...");
+          reconnectTimerRef.current = window.setTimeout(() => connect(accessToken), 1500);
+        }
+      };
+
+      socket.onerror = () => {
+        setConnectionIssue("Realtime connection failed.");
+      };
+    },
+    [
+      handleSocketMessage,
+      setConnectionIssue,
+      setConnectionStatus,
+      setSendMessage,
+    ]
+  );
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe = () => {};
+    setAuthBootstrapped(false);
+    void ensureFirebasePersistence().then(() => {
+      unsubscribe = subscribeToIdTokenChanges(async (firebaseUser) => {
+        if (disposed) return;
+        if (!firebaseUser) {
+          disconnect();
+          clearAuth();
+          setAuthBootstrapped(true);
+          return;
+        }
+        try {
+          const accessToken = await firebaseUser.getIdToken();
+          const ok = setAuthSession({ accessToken });
+          if (ok) await fetchAuthMe();
+        } finally {
+          setAuthBootstrapped(true);
+        }
+      });
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+      disconnect();
+    };
+  }, [clearAuth, disconnect, fetchAuthMe, setAuthBootstrapped, setAuthSession]);
+
+  useEffect(() => {
+    if (authBootstrapped && token) {
+      void fetchSessionState();
+      connect(token);
+    }
+    return () => {
+      if (!token) disconnect();
+    };
+  }, [authBootstrapped, connect, disconnect, fetchSessionState, token]);
+
+  const handleLogout = async () => {
+    disconnect();
+    try {
+      await signOutFirebase();
+    } catch (error) {
+      console.warn("Firebase sign-out failed.", error);
+    }
+    clearAuth();
+  };
+
+  const layoutProps = { onLogout: handleLogout };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <StateGuard>
+        {authBootstrapped && token && connectionIssue ? (
+          <div className="fixed left-1/2 top-3 z-[1000] -translate-x-1/2 rounded-full border border-amber-300/70 bg-slate-950/95 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-amber-100 shadow-xl">
+            {connectionIssue}
+          </div>
+        ) : null}
+        {authBootstrapped && token ? <GlobalChatOverlay /> : null}
+        <Routes>
+          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/lobby" element={token ? <LobbyPage {...layoutProps} /> : <Navigate to="/auth" />} />
+          <Route path="/profile/:userId" element={token ? <ProfilePage {...layoutProps} /> : <Navigate to="/auth" />} />
+          <Route path="/profile/:userId/friends" element={token ? <FriendsPage {...layoutProps} /> : <Navigate to="/auth" />} />
+          <Route path="/admin" element={token ? <AdminPage {...layoutProps} /> : <Navigate to="/auth" />} />
+          <Route path="*" element={<Navigate to={token ? "/lobby" : "/auth"} />} />
+        </Routes>
+      </StateGuard>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
+  );
+}
+
+export default App;
