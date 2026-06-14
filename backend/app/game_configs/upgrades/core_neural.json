@@ -4,5 +4,12 @@
   "building_id": "core",
   "cost_life": 4,
   "cost_actions": 1,
-  "maturity_bonus": 1
+  "requires": { "maturity_min": 0 },
+  "effect_additions": [
+    {
+      "id": "core_neural_maturity_bonus",
+      "type": "production",
+      "specs": { "resource": "maturity", "value": 1 }
+    }
+  ]
 }

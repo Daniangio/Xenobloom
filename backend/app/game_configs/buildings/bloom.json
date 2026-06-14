@@ -3,20 +3,66 @@
   "label": "Bloom",
   "shape": "circle",
   "color": "#48bb78",
+  "tags": ["Organic", "Producer"],
   "build_cost_life": 1,
   "build_cost_actions": 1,
   "requires_adjacent_colony": true,
   "requires_terrain": "neutral",
   "requires_hydration_min": 0,
   "sustain_cost": 1,
-  "life_production_by_hydration": [
-    { "min": 3, "value": 2 },
-    { "min": 1, "value": 1 }
-  ],
-  "maturity_if_hydration_min": 0,
-  "stress_by_hydration": [
-    { "max": -2, "stress": 2 },
-    { "max": -1, "stress": 1 }
+  "effects": [
+    {
+      "id": "bloom_hydrated_life_production",
+      "type": "production",
+      "specs": {
+        "resource": "life",
+        "conditions": { "hydration": [1, 2] },
+        "value": 1
+      }
+    },
+    {
+      "id": "bloom_saturated_life_production",
+      "type": "production",
+      "specs": {
+        "resource": "life",
+        "conditions": { "hydration": [3] },
+        "value": 2
+      }
+    },
+    {
+      "id": "bloom_healthy_maturity_production",
+      "type": "production",
+      "specs": {
+        "resource": "maturity",
+        "conditions": { "hydration": [0, 1, 2, 3], "stress": [0] },
+        "value": 1
+      }
+    },
+    {
+      "id": "bloom_dry_stress",
+      "type": "stress",
+      "specs": {
+        "conditions": { "hydration": [-1, -2] },
+        "value": 1
+      }
+    },
+    {
+      "id": "bloom_extreme_dry_stress",
+      "type": "stress",
+      "specs": {
+        "conditions": { "hydration": [-3] },
+        "value": 2
+      }
+    },
+    {
+      "id": "bloom_stress_reduces_life",
+      "type": "production",
+      "specs": {
+        "resource": "life",
+        "conditions": { "stress": [1, 2] },
+        "value": -1
+      }
+    }
   ],
   "upgrade_ids": ["bloom_resilient", "bloom_scoring"]
 }

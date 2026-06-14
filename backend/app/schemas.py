@@ -106,11 +106,13 @@ class GameStateResponse(BaseModel):
     maturity: int
     base_economy: Dict[str, Any]
     live_economy: Dict[str, Any]
+    resources: Dict[str, Any]
     available_life: int
     logs: List[str]
     grid: Dict[str, Any]
     config: Dict[str, Any]
     selected_tile: Optional[Dict[str, Any]] = None
+    selected_element: Optional[Dict[str, Any]] = None
     available_actions: List[Dict[str, Any]]
 
 

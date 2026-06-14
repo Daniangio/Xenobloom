@@ -129,11 +129,13 @@ class GameEngine:
             "maturity": int(state.get("maturity") or 0),
             "base_economy": base_economy,
             "live_economy": live_economy,
+            "resources": self._resource_summary(state, live_economy=live_economy),
             "available_life": available_life,
             "logs": list(state.get("logs") or [])[:8],
             "grid": state["grid"],
             "config": self.config.public_payload(),
             "selected_tile": selected,
+            "selected_element": self._element_summary(selected) if selected else None,
             "available_actions": self.available_actions(state, selected_tile=selected_tile),
         }
 
@@ -215,6 +217,7 @@ class GameEngine:
                             "label": f"Grow {building['label']}",
                             "cost_life": cost_life,
                             "cost_actions": cost_actions,
+                            "element": self._element_summary({**hex_state, "building": building_id, "building_upgrade": None}),
                         }
                     )
             return actions
@@ -231,7 +234,8 @@ class GameEngine:
                 continue
             cost_actions = int(upgrade.get("cost_actions") or 1)
             cost_life = int(upgrade.get("cost_life") or 0)
-            if actions_left >= cost_actions and available_life >= cost_life:
+            maturity_min = int((upgrade.get("requires") or {}).get("maturity_min") or 0)
+            if actions_left >= cost_actions and available_life >= cost_life and int(state.get("maturity") or 0) >= maturity_min:
                 actions.append(
                     {
                         "type": "upgrade",
@@ -239,6 +243,8 @@ class GameEngine:
                         "label": upgrade["label"],
                         "cost_life": cost_life,
                         "cost_actions": cost_actions,
+                        "requires": upgrade.get("requires") or {},
+                        "element": self._element_summary({**hex_state, "building_upgrade": upgrade_id}),
                     }
                 )
         return actions
@@ -251,14 +257,8 @@ class GameEngine:
             if not building_id:
                 continue
             building = self.config.buildings.get(str(building_id), {})
-            upgrade = self.config.upgrades.get(str(hex_state.get("building_upgrade") or ""), {})
-            sustain += int(building.get("sustain_cost") or 0)
-            life_prod = int(upgrade.get("life_production_override") or building.get("life_production") or 0)
-            if not life_prod:
-                life_prod = self._life_by_hydration(building, int(hex_state.get("hydration") or 0))
-            if upgrade.get("life_bonus_if_hydration_min") is not None and int(hex_state.get("hydration") or 0) >= int(upgrade["life_bonus_if_hydration_min"]):
-                life_prod += int(upgrade.get("life_bonus") or 0)
-            prod += life_prod
+            sustain += self._sustain_cost_for_tile(hex_state, building)
+            prod += self._production_for_tile(hex_state).get("life", 0)
         return {"prod": prod, "sustain": sustain}
 
     def _apply_build(self, state: dict[str, Any], command: dict[str, Any]) -> None:
@@ -403,33 +403,18 @@ class GameEngine:
             building_id = tile.get("building")
             if not building_id:
                 continue
-            got_stress = False
             building = self.config.buildings[str(building_id)]
-            for rule in building.get("stress_by_hydration", []):
-                if int(tile["hydration"]) <= int(rule["max"]):
-                    tile["stress"] = int(tile.get("stress") or 0) + int(rule["stress"])
-                    got_stress = True
-                    break
+            stress_added = self._stress_for_tile(tile)
+            if stress_added:
+                tile["stress"] = int(tile.get("stress") or 0) + stress_added
             if int(tile.get("stress") or 0) >= int(self.rules["stress_collapse_threshold"]):
                 if building_id == "core":
                     core_died = True
                 turn_logs.append(f"{building['label']} at {tile['q']},{tile['r']} collapsed.")
                 tile.update({"building": None, "building_upgrade": None, "stress": 0})
                 continue
-            state["maturity"] = int(state.get("maturity") or 0) + self._maturity_for_tile(tile, got_stress=got_stress)
+            state["maturity"] = int(state.get("maturity") or 0) + self._production_for_tile(tile).get("maturity", 0)
         return core_died
-
-    def _maturity_for_tile(self, tile: dict[str, Any], *, got_stress: bool) -> int:
-        building = self.config.buildings.get(str(tile.get("building") or ""), {})
-        upgrade = self.config.upgrades.get(str(tile.get("building_upgrade") or ""), {})
-        maturity = int(building.get("maturity_per_season") or 0)
-        if building.get("maturity_if_hydration_min") is not None and int(tile["hydration"]) >= int(building["maturity_if_hydration_min"]) and not got_stress:
-            maturity += 1
-        if upgrade.get("maturity_bonus_if_hydration") is not None and int(tile["hydration"]) == int(upgrade["maturity_bonus_if_hydration"]):
-            maturity += int(upgrade.get("maturity_bonus") or 0)
-        else:
-            maturity += int(upgrade.get("maturity_bonus") or 0) if upgrade.get("maturity_bonus_if_hydration") is None else 0
-        return maturity
 
     def _can_build_on(self, state: dict[str, Any], tile: dict[str, Any], building: dict[str, Any]) -> bool:
         if tile.get("building") is not None:
@@ -445,15 +430,118 @@ class GameEngine:
             )
         return True
 
-    def _life_by_hydration(self, building: dict[str, Any], hydration: int) -> int:
-        for rule in building.get("life_production_by_hydration", []):
-            if hydration >= int(rule["min"]):
-                return int(rule["value"])
-        return 0
-
     def _available_life(self, state: dict[str, Any]) -> int:
         base = state.get("base_economy") or {"prod": 0, "sustain": 0}
         return max(0, int(base["prod"]) - int(base["sustain"])) - int(state.get("spent_life") or 0)
+
+    def _resource_summary(self, state: dict[str, Any], *, live_economy: dict[str, int]) -> dict[str, Any]:
+        base = state.get("base_economy") or {"prod": 0, "sustain": 0}
+        spent_life = int(state.get("spent_life") or 0)
+        return {
+            "life": {
+                "produced": int(base.get("prod") or 0),
+                "allocated": int(base.get("sustain") or 0),
+                "available": max(0, int(base.get("prod") or 0) - int(base.get("sustain") or 0)) - spent_life,
+                "next_produced": int(live_economy.get("prod") or 0),
+                "next_allocated": int(live_economy.get("sustain") or 0),
+            },
+            "maturity": {
+                "value": int(state.get("maturity") or 0),
+                "target": int(self.rules["target_maturity"]),
+            },
+        }
+
+    def _element_summary(self, tile: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not tile:
+            return None
+        building_id = tile.get("building")
+        if building_id:
+            building = self.config.buildings.get(str(building_id), {})
+            return {
+                "kind": "building",
+                "id": building_id,
+                "label": building.get("label", building_id),
+                "color": building.get("color", "#94a3b8"),
+                "tags": building.get("tags", []),
+                "sustain_cost": self._sustain_cost_for_tile(tile, building),
+                "effects": self._active_effects(tile),
+                "current_production": self._production_for_tile(tile),
+                "current_stress": self._stress_for_tile(tile),
+            }
+        terrain_id = tile.get("terrain")
+        terrain = self.config.terrains.get(str(terrain_id or ""), {})
+        if terrain_id and terrain_id != "neutral":
+            return {
+                "kind": "terrain",
+                "id": terrain_id,
+                "label": terrain.get("label", terrain_id),
+                "color": terrain.get("color", "#718096"),
+                "tags": [],
+                "effects": [],
+                "current_production": {},
+                "current_stress": int(tile.get("terrain_stress") or 0),
+            }
+        return None
+
+    def _production_for_tile(self, tile: dict[str, Any]) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for effect in self._active_effects(tile):
+            if effect.get("type") != "production":
+                continue
+            specs = effect.get("specs") or {}
+            if not self._conditions_match(tile, specs.get("conditions") or {}):
+                continue
+            resource = str(specs.get("resource") or "life")
+            totals[resource] = totals.get(resource, 0) + int(specs.get("value") or 0)
+        return {resource: max(0, value) for resource, value in totals.items()}
+
+    def _stress_for_tile(self, tile: dict[str, Any]) -> int:
+        total = 0
+        for effect in self._active_effects(tile):
+            if effect.get("type") != "stress":
+                continue
+            specs = effect.get("specs") or {}
+            if self._conditions_match(tile, specs.get("conditions") or {}):
+                total += int(specs.get("value") or 0)
+        return total
+
+    def _active_effects(self, tile: dict[str, Any]) -> list[dict[str, Any]]:
+        building = self.config.buildings.get(str(tile.get("building") or ""), {})
+        effects = [copy.deepcopy(effect) for effect in building.get("effects", [])]
+        upgrade = self.config.upgrades.get(str(tile.get("building_upgrade") or ""), {})
+        replacements = {
+            str(item.get("replace_id")): copy.deepcopy(item.get("effect") or {})
+            for item in upgrade.get("effect_replacements", [])
+            if item.get("replace_id") and item.get("effect")
+        }
+        if replacements:
+            effects = [replacements.get(str(effect.get("id")), effect) for effect in effects]
+        effects.extend(copy.deepcopy(effect) for effect in upgrade.get("effect_additions", []))
+        return effects
+
+    def _sustain_cost_for_tile(self, tile: dict[str, Any], building: dict[str, Any]) -> int:
+        upgrade = self.config.upgrades.get(str(tile.get("building_upgrade") or ""), {})
+        return max(0, int(building.get("sustain_cost") or 0) + int(upgrade.get("sustain_delta") or 0))
+
+    def _conditions_match(self, tile: dict[str, Any], conditions: dict[str, Any]) -> bool:
+        for condition_id, allowed_values in conditions.items():
+            if not isinstance(allowed_values, list):
+                allowed_values = [allowed_values]
+            if self._condition_value(tile, str(condition_id)) not in allowed_values:
+                return False
+        return True
+
+    @staticmethod
+    def _condition_value(tile: dict[str, Any], condition_id: str) -> Any:
+        if condition_id == "hydration":
+            return int(tile.get("hydration") or 0)
+        if condition_id == "stress":
+            return int(tile.get("stress") or 0)
+        if condition_id == "terrain":
+            return tile.get("terrain")
+        if condition_id == "building":
+            return tile.get("building")
+        return tile.get(condition_id)
 
     def _is_forest_aura(self, state: dict[str, Any], tile: dict[str, Any]) -> bool:
         if tile.get("terrain") == "forest":

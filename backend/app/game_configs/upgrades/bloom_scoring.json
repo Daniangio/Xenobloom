@@ -4,6 +4,16 @@
   "building_id": "bloom",
   "cost_life": 3,
   "cost_actions": 1,
-  "maturity_bonus_if_hydration": 3,
-  "maturity_bonus": 1
+  "requires": { "maturity_min": 0 },
+  "effect_additions": [
+    {
+      "id": "bloom_scoring_saturated_maturity_bonus",
+      "type": "production",
+      "specs": {
+        "resource": "maturity",
+        "conditions": { "hydration": [3] },
+        "value": 1
+      }
+    }
+  ]
 }

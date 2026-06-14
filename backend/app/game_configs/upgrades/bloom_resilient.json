@@ -4,6 +4,16 @@
   "building_id": "bloom",
   "cost_life": 3,
   "cost_actions": 1,
-  "life_bonus_if_hydration_min": 0,
-  "life_bonus": 1
+  "requires": { "maturity_min": 0 },
+  "effect_additions": [
+    {
+      "id": "bloom_resilient_life_bonus",
+      "type": "production",
+      "specs": {
+        "resource": "life",
+        "conditions": { "hydration": [0, 1, 2, 3] },
+        "value": 1
+      }
+    }
+  ]
 }

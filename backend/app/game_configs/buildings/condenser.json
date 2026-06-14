@@ -3,14 +3,22 @@
   "label": "Condenser",
   "shape": "square",
   "color": "#e2e8f0",
+  "tags": ["Support"],
   "build_cost_life": 1,
   "build_cost_actions": 1,
   "requires_adjacent_colony": true,
   "requires_terrain": "neutral",
   "sustain_cost": 1,
   "hydration_push_iterations": 1,
-  "stress_by_hydration": [
-    { "max": -2, "stress": 1 }
+  "effects": [
+    {
+      "id": "condenser_extreme_dry_stress",
+      "type": "stress",
+      "specs": {
+        "conditions": { "hydration": [-3, -2] },
+        "value": 1
+      }
+    }
   ],
   "upgrade_ids": ["condenser_heavy", "condenser_geyser"]
 }

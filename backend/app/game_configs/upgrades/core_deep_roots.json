@@ -4,5 +4,15 @@
   "building_id": "core",
   "cost_life": 4,
   "cost_actions": 1,
-  "life_production_override": 5
+  "requires": { "maturity_min": 0 },
+  "effect_replacements": [
+    {
+      "replace_id": "core_life_production",
+      "effect": {
+        "id": "core_deep_roots_life_production",
+        "type": "production",
+        "specs": { "resource": "life", "value": 5 }
+      }
+    }
+  ]
 }

@@ -4,5 +4,6 @@
   "building_id": "condenser",
   "cost_life": 2,
   "cost_actions": 1,
+  "requires": { "maturity_min": 0 },
   "hydration_push_iterations_override": 2
 }

@@ -4,5 +4,6 @@
   "building_id": "condenser",
   "cost_life": 2,
   "cost_actions": 1,
+  "requires": { "maturity_min": 0 },
   "instant_hydration_delta": 3
 }

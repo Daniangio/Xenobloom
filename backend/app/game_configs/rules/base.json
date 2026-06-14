@@ -3,7 +3,7 @@
   "map_radius": 4,
   "actions_per_season": 3,
   "max_seasons": 25,
-  "target_maturity": 100,
+  "target_maturity": 1000,
   "initial_rocks": 3,
   "initial_forests": 3,
   "initial_moist_tiles": 5,

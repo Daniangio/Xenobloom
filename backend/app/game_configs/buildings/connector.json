@@ -1,0 +1,23 @@
+{
+  "id": "connector",
+  "label": "Connector",
+  "shape": "diamond",
+  "color": "#94a3b8",
+  "tags": ["Root"],
+  "build_cost_life": 0,
+  "build_cost_actions": 1,
+  "requires_adjacent_colony": true,
+  "requires_terrain": "neutral",
+  "sustain_cost": 0,
+  "effects": [
+    {
+      "id": "connector_dry_stress",
+      "type": "stress",
+      "specs": {
+        "conditions": { "hydration": [-3, -2, -1] },
+        "value": 1
+      }
+    }
+  ],
+  "upgrade_ids": []
+}
