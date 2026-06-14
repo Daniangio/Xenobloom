@@ -17,8 +17,13 @@ import {
 import AdminPage from "../pages/AdminPage.jsx";
 import AuthPage from "../pages/AuthPage.jsx";
 import FriendsPage from "../pages/FriendsPage.jsx";
+import GameHistoryPage from "../pages/GameHistoryPage.jsx";
+import GameRoomPage from "../pages/GameRoomPage.jsx";
 import LobbyPage from "../pages/LobbyPage.jsx";
+import PlayPage from "../pages/PlayPage.jsx";
+import PostGamePage from "../pages/PostGamePage.jsx";
 import ProfilePage from "../pages/ProfilePage.jsx";
+import SoloPlayPage from "../pages/SoloPlayPage.jsx";
 import { useStore } from "../store.js";
 import { buildWsUrl } from "../utils/connection.js";
 
@@ -47,6 +52,7 @@ const StateGuard = ({ children }) => {
 };
 
 function AppContent() {
+  const location = useLocation();
   const {
     token,
     authBootstrapped,
@@ -215,21 +221,28 @@ function AppContent() {
     ) : (
       <Navigate to="/auth" />
     );
+  const inGamePage = (page) => (token ? page : <Navigate to="/auth" />);
+  const isInGameRoom = /^\/games\/[^/]+$/.test(location.pathname);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <StateGuard>
-        {authBootstrapped && token && connectionIssue ? (
+        {authBootstrapped && token && connectionIssue && !isInGameRoom ? (
           <div className="fixed left-1/2 top-3 z-[1000] -translate-x-1/2 rounded-full border border-amber-300/70 bg-slate-950/95 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-amber-100 shadow-xl">
             {connectionIssue}
           </div>
         ) : null}
-        {authBootstrapped && token ? <GlobalChatOverlay /> : null}
+        {authBootstrapped && token && !isInGameRoom ? <GlobalChatOverlay /> : null}
         <Routes>
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/lobby" element={authenticatedPage(<LobbyPage />)} />
+          <Route path="/play" element={authenticatedPage(<PlayPage />)} />
+          <Route path="/play/solo" element={authenticatedPage(<SoloPlayPage />)} />
           <Route path="/profile/:userId" element={authenticatedPage(<ProfilePage />)} />
           <Route path="/profile/:userId/friends" element={authenticatedPage(<FriendsPage />)} />
+          <Route path="/profile/:userId/history" element={authenticatedPage(<GameHistoryPage />)} />
+          <Route path="/games/:roomId" element={inGamePage(<GameRoomPage />)} />
+          <Route path="/games/:roomId/post-game" element={authenticatedPage(<PostGamePage />)} />
           <Route path="/admin" element={authenticatedPage(<AdminPage />)} />
           <Route path="*" element={<Navigate to={token ? "/lobby" : "/auth"} />} />
         </Routes>

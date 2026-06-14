@@ -60,6 +60,40 @@ class LobbyStateResponse(BaseModel):
     users: List[UserPublic]
 
 
+class GameRoomCreateRequest(BaseModel):
+    mode: str = "solo"
+    game_type: str = "quick_match"
+
+
+class GameRoomResponse(BaseModel):
+    id: str
+    owner_user_id: str
+    mode: str
+    game_type: str
+    state: str
+    created_at: str
+    started_at: str
+    ended_at: Optional[str] = None
+    result_id: Optional[str] = None
+
+
+class GameResultResponse(BaseModel):
+    id: str
+    room_id: str
+    mode: str
+    game_type: str
+    outcome: str
+    maturity: int
+    turns: int
+    duration_seconds: int
+    summary: str
+    created_at: str
+
+
+class GameHistoryResponse(BaseModel):
+    results: List[GameResultResponse]
+
+
 class AuthMeResponse(BaseModel):
     uid: str
     email: Optional[str] = None

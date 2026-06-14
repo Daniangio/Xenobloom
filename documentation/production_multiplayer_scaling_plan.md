@@ -16,64 +16,7 @@ The target is not "internet scale" yet. The target is a robust small production 
 
 ---
 
-## 1. Current constraints
-
-### 1.1 Authentication
-
-Current state:
-- users are partly stored in fake/in-memory structures
-- guest users are created ad hoc on websocket connect
-- JWTs are issued, but there is no refresh-token/session lifecycle
-- websocket auth is a one-shot token message after socket accept
-- no rate limiting, device/session management, or account recovery model
-
-Production risk:
-- process restart drops ephemeral users and room relationships
-- stolen tokens cannot be revoked cleanly
-- guest identities are fragile and not upgradeable safely
-- no abuse controls on login/register/guest creation
-
-### 1.2 Lobby and room system
-
-Current state:
-- rooms, invites, chat, mulligans, and some live game routing are all owned by one in-memory `RoomManager`
-- lobby is effectively a process-local memory structure
-- a single backend instance is the source of truth
-
-Production risk:
-- horizontal scaling is blocked
-- process crash loses all rooms and pending interactions
-- reconnect behavior is best-effort but not durable
-- one hot room manager becomes both state store and orchestration layer
-
-### 1.3 Matchmaking
-
-Current state:
-- there is lobby joining, direct challenge, bot room, and goldfish room
-- there is no dedicated matchmaking queue or queue state model
-- no queue rating buckets, acceptance flow, or queue timeout UX
-
-Production risk:
-- open rooms do not scale into real matchmaking
-- users must coordinate manually
-- queue fairness, cancellations, and reconnects are undefined
-
-### 1.4 UX and product flow
-
-Current state:
-- the client exposes many debug-like states directly
-- connection failures and pending actions are only partially surfaced
-- guest/login/deck/room/game are separate flows, but not a cohesive product funnel
-- reconnect and resume are functional but not polished
-
-Production risk:
-- players cannot trust what state they are in
-- match start, reconnection, and opponent waiting states feel inconsistent
-- support burden rises quickly because errors are ambiguous
-
----
-
-## 2. Production target architecture
+## 1. Production target architecture
 
 For hundreds of concurrent players, the correct architecture is still fairly small:
 
@@ -84,60 +27,9 @@ For hundreds of concurrent players, the correct architecture is still fairly sma
 - **Background workers**: lightweight task workers for matchmaking ticks, bot turns if needed, analytics/event fanout, replay persistence
 - **Object storage**: for replays, logs, large exports if needed later
 
-At this scale, this can still run as a single deployable backend if structured correctly, but the data model must stop depending on in-memory dictionaries.
-
 ---
 
 ## 3. Authentication changes
-
-### 3.1 Replace fake/in-memory users with persistent accounts
-
-Required changes:
-- store users in PostgreSQL
-- use stable user IDs, not username-derived IDs
-- add tables for:
-  - `users`
-  - `auth_identities` (password, OAuth provider, guest)
-  - `sessions`
-  - `refresh_tokens`
-  - `user_devices` or `session_metadata`
-
-Why:
-- persistent identity is required for decks, bans, match history, reconnect, moderation, and support
-
-### 3.2 Split access token and refresh token
-
-Required changes:
-- short-lived access tokens: 10-20 minutes
-- refresh tokens stored server-side with rotation
-- explicit logout and session revocation
-- websocket connections must be tied to a real session ID
-
-Why:
-- current JWT model is acceptable for local/dev, not for production session control
-- rotating refresh tokens reduces replay risk and lets you revoke compromised sessions
-
-### 3.3 Guest accounts must become first-class temporary accounts
-
-Required changes:
-- guest play should create a real guest user row and session
-- allow later upgrade of guest account into permanent account without losing decks/history
-- set guest expiry/cleanup policy only for inactive users, not active sessions
-
-Why:
-- "anonymous socket user" is too weak for reconnect, persistence, or anti-abuse
-- guest upgrade is important for retention
-
-### 3.4 Add abuse protection
-
-Required changes:
-- rate-limit register/login/guest creation endpoints
-- rate-limit websocket connect and privileged socket actions
-- add IP/device heuristics and basic bot protection on auth flows
-- password policy and email verification if public launch requires it
-
-Why:
-- once public, auth is one of the first attack surfaces
 
 ### 3.5 Separate auth transport from game transport
 
@@ -165,20 +57,6 @@ Required changes:
 
 Why:
 - presence cannot remain process-local if you want multiple backend instances or robust reconnects
-
-### 4.2 Move lobby state out of `RoomManager` memory
-
-Required changes:
-- persistent or cache-backed models for:
-  - open rooms
-  - direct invites
-  - lobby chat
-  - queue entries
-  - game summaries
-- backend instances subscribe to room/lobby updates through Redis pubsub or streams
-
-Why:
-- room lifecycle must survive instance restarts and allow multiple gateways
 
 ### 4.3 Redesign room lifecycle as explicit state machine
 
@@ -214,75 +92,12 @@ Why:
 
 ---
 
-## 5. Matchmaking system redesign
-
-### 5.1 Stop using open rooms as primary matchmaking
-
-For real public play, the primary flow should be:
-- choose mode
-- choose deck(s)
-- click `Play`
-- enter queue
-- receive match
-- accept / decline
-- enter match room automatically
-
-Open rooms can remain as custom games, not ranked/casual matchmaking.
-
-### 5.2 Introduce queue entities
-
-Required data model:
-- `matchmaking_queue_entries`
-- `matchmaking_tickets`
-- `match_acceptance`
-- `match_records`
-
-Suggested queue dimensions:
-- format/ruleset
-- ranked vs casual
-- region
-- skill/MMR bucket
-- optional deck power bucket later
-- client version / compatibility
-
-### 5.3 Queue matching logic
-
-For hundreds of players, simple periodic matching is enough:
-- run every 1-2 seconds
-- group by queue type and region
-- match closest MMR / wait time first
-- widen acceptable MMR range over time
-
-Do not overengineer this initially. The important part is deterministic server ownership and clear queue UX.
-
-### 5.4 Ready-check / accept flow
-
-Required behavior:
-- when a match is found, send `match_found`
-- both players must accept within N seconds
-- if one declines or times out, the accepting player returns to queue with preserved priority/age
-- penalties for repeated dodges can come later
-
-Why:
-- prevents dead matches and gives players explicit control
-
-### 5.5 Bots in matchmaking
-
-Production rule:
-- bot matches should be explicit or fallback only after queue timeout
-- if bots are used as queue-fillers, the client must label that clearly
-
-Why:
-- hidden bot substitution damages trust
-
----
-
 ## 6. Game session and server authority changes
 
 ### 6.1 Persist match metadata separately from full board state
 
 Required separation:
-- persistent match record: players, decks, result, duration, format, timestamps
+- persistent match record: players, result, duration, format, timestamps
 - recoverable live game snapshot: turn state, board state, pending decisions
 - replay/event log: append-only actions and outcomes
 

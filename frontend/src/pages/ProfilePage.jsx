@@ -17,6 +17,7 @@ const ProfilePage = () => {
   const profileSubnavItems = [
     { label: "Profile", to: `/profile/${targetUserId}` },
     { label: "Friends", to: `/profile/${targetUserId}/friends` },
+    { label: "History", to: `/profile/${targetUserId}/history` },
   ];
 
   const loadProfile = async () => {
