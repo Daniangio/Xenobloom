@@ -71,6 +71,32 @@ class TestGameEngine(unittest.TestCase):
         self.assertEqual(next_state["spent_life"], 0)
         self.assertEqual(engine._stress_for_tile(next_state["grid"]["1,0"]), 1)
 
+    def test_condenser_hydration_push_is_configured_as_effect(self):
+        engine = GameEngine()
+        state = engine.create_initial_state(seed=42)
+        for tile in state["grid"].values():
+            tile.update({"terrain": "neutral", "hydration": 0, "building": None, "building_upgrade": None})
+        state["grid"]["0,0"].update({"building": "condenser", "hydration": 0})
+        state["grid"]["1,0"]["hydration"] = -3
+        state["grid"]["0,1"]["hydration"] = -2
+
+        public_state = engine.public_state(state, selected_tile="0,0")
+        effects = public_state["selected_element"]["effects"]
+        self.assertTrue(any(effect["type"] == "hydration_push" for effect in effects))
+
+        engine._resolve_condensers(state, engine._rng_for(state, "test"))
+        self.assertEqual(state["grid"]["1,0"]["hydration"], -2)
+
+        state["grid"]["0,0"]["building_upgrade"] = "condenser_heavy"
+        state["grid"]["1,0"]["hydration"] = -3
+        state["grid"]["0,1"]["hydration"] = -2
+        heavy_effects = engine._active_effects(state["grid"]["0,0"])
+        hydration_effect = next(effect for effect in heavy_effects if effect["type"] == "hydration_push")
+        self.assertEqual(hydration_effect["specs"]["iterations"], 2)
+
+        engine._resolve_condensers(state, engine._rng_for(state, "test"))
+        self.assertEqual(state["grid"]["1,0"]["hydration"], -1)
+
     def test_only_fully_dry_tiles_spread_drought(self):
         engine = GameEngine()
         state = engine.create_initial_state(seed=42)

@@ -5,5 +5,18 @@
   "cost_life": 2,
   "cost_actions": 1,
   "requires": { "maturity_min": 0 },
-  "hydration_push_iterations_override": 2
+  "effect_replacements": [
+    {
+      "replace_id": "condenser_hydration_push",
+      "effect": {
+        "id": "condenser_heavy_hydration_push",
+        "type": "hydration_push",
+        "specs": {
+          "target": "least_hydrated_adjacent",
+          "iterations": 2,
+          "value": 1
+        }
+      }
+    }
+  ]
 }

@@ -335,28 +335,44 @@ class GameEngine:
         for tile in list(state["grid"].values()):
             if tile.get("building") != "condenser":
                 continue
-            building = self.config.buildings["condenser"]
-            upgrade = self.config.upgrades.get(str(tile.get("building_upgrade") or ""), {})
-            iterations = int(upgrade.get("hydration_push_iterations_override") or building.get("hydration_push_iterations") or 1)
-            for _ in range(iterations):
-                candidates = []
-                min_hydration = 999
-                for neighbor in neighbors(tile["q"], tile["r"]):
-                    target = state["grid"].get(hex_key(neighbor["q"], neighbor["r"]))
-                    if not target:
-                        continue
-                    delta = abs(int(tile["hydration"]) - int(target["hydration"]))
-                    if target.get("terrain") == "rock" and delta < int(self.config.terrains["rock"]["hydration_delta_threshold"]):
-                        continue
-                    hydration = int(target["hydration"])
-                    if hydration < min_hydration:
-                        min_hydration = hydration
-                        candidates = [{"target": target, "dir_index": neighbor["dir_index"]}]
-                    elif hydration == min_hydration:
-                        candidates.append({"target": target, "dir_index": neighbor["dir_index"]})
-                if candidates:
-                    target = self._resolve_wind_tie(candidates, int(state["wind_dir"]), rng)["target"]
-                    target["hydration"] = self._clamp_hydration(int(target["hydration"]) + 1, target.get("terrain"))
+            for effect in self._active_effects(tile):
+                if effect.get("type") != "hydration_push":
+                    continue
+                specs = effect.get("specs") or {}
+                if not self._conditions_match(tile, specs.get("conditions") or {}):
+                    continue
+                if str(specs.get("target") or "least_hydrated_adjacent") != "least_hydrated_adjacent":
+                    continue
+                iterations = int(specs.get("iterations") or 1)
+                value = int(specs.get("value") or 1)
+                for _ in range(iterations):
+                    self._push_hydration_to_least_hydrated_neighbor(state, tile, value, rng)
+
+    def _push_hydration_to_least_hydrated_neighbor(
+        self,
+        state: dict[str, Any],
+        tile: dict[str, Any],
+        value: int,
+        rng: random.Random,
+    ) -> None:
+        candidates = []
+        min_hydration = 999
+        for neighbor in neighbors(tile["q"], tile["r"]):
+            target = state["grid"].get(hex_key(neighbor["q"], neighbor["r"]))
+            if not target:
+                continue
+            delta = abs(int(tile["hydration"]) - int(target["hydration"]))
+            if target.get("terrain") == "rock" and delta < int(self.config.terrains["rock"]["hydration_delta_threshold"]):
+                continue
+            hydration = int(target["hydration"])
+            if hydration < min_hydration:
+                min_hydration = hydration
+                candidates = [{"target": target, "dir_index": neighbor["dir_index"]}]
+            elif hydration == min_hydration:
+                candidates.append({"target": target, "dir_index": neighbor["dir_index"]})
+        if candidates:
+            target = self._resolve_wind_tie(candidates, int(state["wind_dir"]), rng)["target"]
+            target["hydration"] = self._clamp_hydration(int(target["hydration"]) + value, target.get("terrain"))
 
     def _resolve_drought(self, state: dict[str, Any], rng: random.Random) -> None:
         drought_level = int(self.rules["hydration_min"])

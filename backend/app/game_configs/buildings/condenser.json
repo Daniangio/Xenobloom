@@ -9,8 +9,16 @@
   "requires_adjacent_colony": true,
   "requires_terrain": "neutral",
   "sustain_cost": 1,
-  "hydration_push_iterations": 1,
   "effects": [
+    {
+      "id": "condenser_hydration_push",
+      "type": "hydration_push",
+      "specs": {
+        "target": "least_hydrated_adjacent",
+        "iterations": 1,
+        "value": 1
+      }
+    },
     {
       "id": "condenser_extreme_dry_stress",
       "type": "stress",
