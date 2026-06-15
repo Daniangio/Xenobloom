@@ -1,6 +1,6 @@
 import { jwtDecode } from "jwt-decode";
 import { create } from "zustand";
-import { buildApiUrl } from "./utils/connection.js";
+import { fetchWithRetry } from "./utils/connection.js";
 
 const ACCESS_TOKEN_KEY = "authToken";
 const DEFAULT_CHAT_ID = "global:global";
@@ -93,20 +93,30 @@ export const useStore = create((set, get) => ({
     const token = get().token;
     if (!token) return null;
     try {
-      const response = await fetch(buildApiUrl("/api/auth/me"), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetchWithRetry(
+        "/api/auth/me",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+        {
+          attempts: 8,
+          initialDelayMs: 300,
+          maxDelayMs: 5000,
+          onRetry: () => set({ connectionIssue: "Backend unavailable. Retrying..." }),
+        }
+      );
       if (response.status === 401) {
         get().clearAuth();
         return null;
       }
       if (!response.ok) throw new Error("Failed to fetch auth profile");
       const payload = await response.json();
-      set({ authMe: payload });
+      set({ authMe: payload, connectionIssue: "" });
       get().setAuthUser(payload);
       return payload;
     } catch (error) {
-      console.warn("Failed to fetch auth profile.", error);
+      set({ connectionIssue: "Backend unavailable. Retrying shortly..." });
+      console.warn("Backend unavailable while fetching auth profile.", error);
       return null;
     }
   },
@@ -118,19 +128,29 @@ export const useStore = create((set, get) => ({
       return null;
     }
     try {
-      const response = await fetch(buildApiUrl("/api/session/state"), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetchWithRetry(
+        "/api/session/state",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+        {
+          attempts: 8,
+          initialDelayMs: 300,
+          maxDelayMs: 5000,
+          onRetry: () => set({ connectionIssue: "Backend unavailable. Retrying..." }),
+        }
+      );
       if (response.status === 401) {
         get().clearAuth();
         return null;
       }
       if (!response.ok) throw new Error(`Failed to fetch session state (${response.status})`);
       const payload = await response.json();
-      set({ sessionState: payload });
+      set({ sessionState: payload, connectionIssue: "" });
       return payload;
     } catch (error) {
-      console.warn("Failed to fetch session state.", error);
+      set({ connectionIssue: "Backend unavailable. Retrying shortly..." });
+      console.warn("Backend unavailable while fetching session state.", error);
       return null;
     }
   },

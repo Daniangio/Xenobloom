@@ -24,6 +24,44 @@ export const apiBaseUrl = resolveApiBaseUrl();
 export const wsBaseUrl = resolveWsBaseUrl();
 
 export const buildApiUrl = (path) => `${apiBaseUrl}${ensureLeadingSlash(path)}`;
+
+const delay = (delayMs) => new Promise((resolve) => globalThis.setTimeout(resolve, delayMs));
+
+const shouldRetryResponse = (response, retryStatuses) => retryStatuses.includes(response.status);
+
+export const fetchWithRetry = async (
+  path,
+  options = {},
+  {
+    attempts = 5,
+    initialDelayMs = 300,
+    maxDelayMs = 4000,
+    retryStatuses = [502, 503, 504],
+    onRetry = null,
+  } = {}
+) => {
+  let lastError = null;
+  const safeAttempts = Math.max(1, Number(attempts) || 1);
+  for (let attempt = 1; attempt <= safeAttempts; attempt += 1) {
+    try {
+      const response = await fetch(buildApiUrl(path), options);
+      if (!shouldRetryResponse(response, retryStatuses) || attempt === safeAttempts) {
+        return response;
+      }
+      lastError = new Error(`Retryable response status ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === safeAttempts) throw error;
+    }
+
+    const delayMs = Math.min(maxDelayMs, initialDelayMs * 2 ** (attempt - 1));
+    onRetry?.({ attempt, delayMs, error: lastError });
+    await delay(delayMs);
+  }
+
+  throw lastError || new Error("Request failed.");
+};
+
 export const fetchJsonWithTimeout = async (
   path,
   options = {},

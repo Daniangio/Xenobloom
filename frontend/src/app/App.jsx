@@ -28,7 +28,7 @@ import PostGamePage from "../pages/PostGamePage.jsx";
 import ProfilePage from "../pages/ProfilePage.jsx";
 import SoloPlayPage from "../pages/SoloPlayPage.jsx";
 import { useStore } from "../store.js";
-import { buildWsUrl } from "../utils/connection.js";
+import { buildApiUrl, buildWsUrl } from "../utils/connection.js";
 
 const StateGuard = ({ children }) => {
   const { token, authBootstrapped } = useStore();
@@ -77,12 +77,14 @@ function AppContent() {
   } = useStore();
   const socketRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  const reconnectAttemptRef = useRef(0);
 
   const disconnect = useCallback(() => {
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    reconnectAttemptRef.current = 0;
     const socket = socketRef.current;
     socketRef.current = null;
     setSendMessage(null);
@@ -128,6 +130,7 @@ function AppContent() {
       setConnectionIssue("Connecting...");
 
       socket.onopen = () => {
+        reconnectAttemptRef.current = 0;
         setConnectionStatus(true);
         setConnectionIssue("");
         setSendMessage((message) => {
@@ -152,13 +155,16 @@ function AppContent() {
         setSendMessage(null);
         setConnectionStatus(false);
         if (accessToken) {
-          setConnectionIssue("Disconnected. Reconnecting...");
-          reconnectTimerRef.current = window.setTimeout(() => connect(accessToken), 1500);
+          const attempt = reconnectAttemptRef.current + 1;
+          reconnectAttemptRef.current = attempt;
+          const delayMs = Math.min(10000, 750 * 2 ** Math.min(attempt - 1, 4));
+          setConnectionIssue(`Realtime unavailable. Reconnecting in ${Math.ceil(delayMs / 1000)}s...`);
+          reconnectTimerRef.current = window.setTimeout(() => connect(accessToken), delayMs);
         }
       };
 
       socket.onerror = () => {
-        setConnectionIssue("Realtime connection failed.");
+        setConnectionIssue("Realtime unavailable. Reconnecting...");
       };
     },
     [
@@ -199,14 +205,38 @@ function AppContent() {
   }, [clearAuth, disconnect, fetchAuthMe, setAuthBootstrapped, setAuthSession]);
 
   useEffect(() => {
-    if (authBootstrapped && token) {
+    if (!authBootstrapped || !token) return undefined;
+    void fetchSessionState();
+    const sessionIntervalId = window.setInterval(() => {
       void fetchSessionState();
-      connect(token);
-    }
+    }, 15000);
+    connect(token);
     return () => {
-      if (!token) disconnect();
+      window.clearInterval(sessionIntervalId);
+      disconnect();
     };
   }, [authBootstrapped, connect, disconnect, fetchSessionState, token]);
+
+  useEffect(() => {
+    if (!authBootstrapped || !token || !connectionIssue.startsWith("Backend unavailable")) {
+      return undefined;
+    }
+    let cancelled = false;
+    const clearWhenHealthy = async () => {
+      try {
+        const response = await fetch(buildApiUrl("/api/health"), { cache: "no-store" });
+        if (!cancelled && response.ok) setConnectionIssue("");
+      } catch (_error) {
+        // The regular auth/session retry loop owns the visible connection state.
+      }
+    };
+    void clearWhenHealthy();
+    const intervalId = window.setInterval(clearWhenHealthy, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [authBootstrapped, connectionIssue, setConnectionIssue, token]);
 
   const handleLogout = async () => {
     disconnect();

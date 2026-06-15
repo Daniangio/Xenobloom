@@ -12,10 +12,10 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import HexTile, { NUTRIENT_COLORS, tileStress } from "../components/HexTile.jsx";
 import { useStore } from "../store.js";
 import { buildApiUrl } from "../utils/connection.js";
 
-const HEX_SIZE = 22;
 const HYDRATION_RANGE = { min: -3, max: 3 };
 const STRESS_RANGE = { min: 0, max: 3 };
 const WIND_ROTATION = {
@@ -26,12 +26,6 @@ const WIND_ROTATION = {
   NW: 330,
   NE: 30,
 };
-const NUTRIENT_COLORS = {
-  green: "#48bb78",
-  blue: "#4299e1",
-  purple: "#9f7aea",
-};
-
 const GameRoomPage = () => {
   const { roomId } = useParams();
   const { token } = useStore();
@@ -731,90 +725,6 @@ const PositiveStat = ({ icon, label, value, range, compact = false }) => {
   );
 };
 
-const HexTile = ({ config, tile, isSelected, onSelect }) => {
-  const x = HEX_SIZE * Math.sqrt(3) * (tile.q + tile.r / 2);
-  const y = HEX_SIZE * 1.5 * tile.r;
-  const points = Array.from({ length: 6 }, (_, index) => {
-    const angle = (2 * Math.PI / 6) * (index - 0.5);
-    return `${x + HEX_SIZE * Math.cos(angle)},${y + HEX_SIZE * Math.sin(angle)}`;
-  });
-  const fill = tile.terrain === "neutral"
-    ? hydrationColor(tile.hydration)
-    : config?.terrains?.[tile.terrain]?.color || "#718096";
-  const building = config?.buildings?.[tile.building];
-  const stress = tileStress(tile);
-
-  return (
-    <g className="cursor-pointer transition-opacity hover:opacity-80" onClick={onSelect}>
-      <polygon
-        fill={fill}
-        points={points.join(" ")}
-        stroke={isSelected ? "#fbbf24" : "#0f172a"}
-        strokeWidth={isSelected ? 3 : 1}
-      />
-      {tile.nutrient_type ? (
-        <circle
-          cx={x + HEX_SIZE * 0.43}
-          cy={y - HEX_SIZE * 0.42}
-          fill={NUTRIENT_COLORS[tile.nutrient_type] || "#9f7aea"}
-          r={HEX_SIZE * 0.16}
-          stroke="#0f172a"
-          strokeWidth="1.5"
-        />
-      ) : null}
-      {tile.terrain === "rock" ? <circle cx={x} cy={y} fill="#2d3748" r={HEX_SIZE * 0.5} /> : null}
-      {tile.terrain === "forest" ? <path d={`M${x},${y - 8} L${x - 7},${y + 5} L${x + 7},${y + 5} Z`} fill="#1c4532" /> : null}
-      {building ? <BuildingGlyph building={building} config={config} tile={tile} x={x} y={y} /> : null}
-      {stress > 0 ? (
-        <text fill="#fff" fontSize="12" fontWeight="bold" stroke="#000" strokeWidth="1" textAnchor="middle" x={x} y={y + 4}>
-          {"!".repeat(stress)}
-        </text>
-      ) : null}
-    </g>
-  );
-};
-
-const BuildingGlyph = ({ building, config, tile, x, y }) => {
-  const tags = (building.tags || []).slice(0, 2);
-  const buildingColor = tile.building === "assimilator" && tile.nutrient_type ? NUTRIENT_COLORS[tile.nutrient_type] : building.color;
-  const tagRects = tags.map((tagId, index) => (
-    <rect fill={config?.tags?.[tagId]?.color || "#94a3b8"} height="4" key={tagId} rx="1" width="7" x={x - 8 + index * 9} y={y + 12} />
-  ));
-  if (building.shape === "triangle") {
-    return (
-      <g>
-        <path d={`M${x},${y - HEX_SIZE * 0.42} L${x - HEX_SIZE * 0.4},${y + HEX_SIZE * 0.28} L${x + HEX_SIZE * 0.4},${y + HEX_SIZE * 0.28} Z`} fill={buildingColor} />
-        <circle cx={x} cy={y} fill="#0f172a" r={HEX_SIZE * 0.13} />
-        {tagRects}
-      </g>
-    );
-  }
-  if (building.shape === "square") {
-    return (
-      <g>
-        <rect fill={buildingColor} height={HEX_SIZE * 0.62} width={HEX_SIZE * 0.62} x={x - HEX_SIZE * 0.31} y={y - HEX_SIZE * 0.31} />
-        {tile.building_upgrade ? <circle cx={x} cy={y} fill="#2b6cb0" r={HEX_SIZE * 0.18} /> : null}
-        {tagRects}
-      </g>
-    );
-  }
-  if (building.shape === "diamond") {
-    return (
-      <g>
-        <rect fill={buildingColor} height={HEX_SIZE * 0.5} transform={`rotate(45 ${x} ${y})`} width={HEX_SIZE * 0.5} x={x - HEX_SIZE * 0.25} y={y - HEX_SIZE * 0.25} />
-        {tagRects}
-      </g>
-    );
-  }
-  return (
-    <g>
-      <circle cx={x} cy={y} fill={buildingColor} r={HEX_SIZE * 0.42} />
-      {tile.building_upgrade ? <circle cx={x} cy={y} fill="#0f172a" r={HEX_SIZE * 0.18} /> : null}
-      {tagRects}
-    </g>
-  );
-};
-
 const commandFromAction = (action, tileKey) => {
   if (action.type === "build") return { type: "build", tile_key: tileKey, building_type: action.building_type };
   if (action.type === "upgrade") return { type: "upgrade", tile_key: tileKey, upgrade_id: action.upgrade_id };
@@ -828,26 +738,6 @@ const actionLabel = (action) => {
   if (action?.type === "build") return "Build";
   if (action?.type === "global_upgrade") return "Unlock";
   return "Upgrade";
-};
-
-const hydrationColor = (hydration) => {
-  const colors = {
-    "-3": "#742a2a",
-    "-2": "#9b2c2c",
-    "-1": "#e53e3e",
-    0: "#718096",
-    1: "#63b3ed",
-    2: "#4299e1",
-    3: "#2b6cb0",
-  };
-  return colors[String(hydration)] || "#718096";
-};
-
-const tileStress = (tile) => {
-  if (!tile) return 0;
-  const buildingStress = Number(tile.stress || 0);
-  const terrainStress = tile.terrain && tile.terrain !== "neutral" ? Number(tile.terrain_stress || 0) : 0;
-  return Math.max(buildingStress, terrainStress);
 };
 
 const formatEffectType = (type) => String(type || "").replaceAll("_", " ");

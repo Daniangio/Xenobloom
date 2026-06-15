@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import HexTile, { BuildingGlyph, hexCenter, hexPoints, hydrationColor } from "../components/HexTile.jsx";
 import { useStore } from "../store.js";
 import { buildApiUrl } from "../utils/connection.js";
 
 const HEX_SIZE = 24;
 const TERRAIN_OPTIONS = [
-  { id: "neutral", label: "Normal", color: "#ffffff" },
+  { id: "__empty", label: "Empty", color: "#ffffff" },
+  { id: "neutral", label: "Normal", color: hydrationColor(0) },
   { id: "rock", label: "Mountain", color: "#475569" },
   { id: "forest", label: "Forest", color: "#2f855a" },
 ];
@@ -23,7 +25,6 @@ const defaultPayload = () => ({
 });
 
 const tileKey = (q, r) => `${q},${r}`;
-const parseKey = (key) => key.split(",").map((part) => Number(part));
 
 const CreatorEditorPage = () => {
   const { creationId } = useParams();
@@ -44,8 +45,14 @@ const CreatorEditorPage = () => {
 
   useEffect(() => {
     const loadConfig = async () => {
-      const response = await fetch(buildApiUrl("/api/game/config"), { headers: { Authorization: `Bearer ${token}` } });
-      if (response.ok) setConfig(await response.json());
+      try {
+        const response = await fetch(buildApiUrl("/api/game/config"), { headers: { Authorization: `Bearer ${token}` } });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Failed to load game config.");
+        setConfig(data);
+      } catch (configError) {
+        setError(configError.message || "Failed to load game config.");
+      }
     };
     if (token) void loadConfig();
   }, [token]);
@@ -79,7 +86,10 @@ const CreatorEditorPage = () => {
     return tiles;
   }, [editorRadius]);
 
-  const buildingOptions = useMemo(() => Object.values(config?.buildings || {}), [config]);
+  const buildingOptions = useMemo(
+    () => Object.values(config?.buildings || {}).filter((building) => building.buildable !== false),
+    [config]
+  );
   const buildingPageSize = 5;
   const pagedBuildings = buildingOptions.slice(buildingPage * buildingPageSize, (buildingPage + 1) * buildingPageSize);
   const pageCount = Math.max(1, Math.ceil(buildingOptions.length / buildingPageSize));
@@ -90,9 +100,16 @@ const CreatorEditorPage = () => {
     setPayload((current) => {
       const nextTile = { ...(current.tiles[key] || {}) };
       updater(nextTile);
+      const hasTileContent =
+        nextTile.terrain ||
+        nextTile.hydration ||
+        nextTile.nutrient_type ||
+        nextTile.building ||
+        nextTile.building_upgrade;
+      if (hasTileContent && !nextTile.terrain) nextTile.terrain = "neutral";
       const nextTiles = { ...current.tiles };
       const isDefault =
-        (!nextTile.terrain || nextTile.terrain === "neutral") &&
+        !nextTile.terrain &&
         !nextTile.hydration &&
         !nextTile.nutrient_type &&
         !nextTile.building &&
@@ -105,9 +122,25 @@ const CreatorEditorPage = () => {
 
   const paintTile = (key) => {
     setSelectedKey(key);
+    if (terrainBrush === "__empty") {
+      setPayload((current) => {
+        const nextTiles = { ...current.tiles };
+        delete nextTiles[key];
+        return { ...current, tiles: nextTiles };
+      });
+      return;
+    }
     updateTile(key, (tile) => {
       tile.terrain = terrainBrush;
       if (buildingBrush !== "__unchanged") tile.building = buildingBrush || null;
+    });
+  };
+
+  const setSelectedBuilding = (buildingId) => {
+    setBuildingBrush(buildingId || "");
+    updateTile(selectedKey, (tile) => {
+      tile.building = buildingId || null;
+      if (buildingId && !tile.terrain) tile.terrain = "neutral";
     });
   };
 
@@ -153,7 +186,9 @@ const CreatorEditorPage = () => {
             <div className="mt-2 grid grid-cols-3 gap-2">
               {TERRAIN_OPTIONS.map((option) => (
                 <button className={`rounded-md border px-2 py-2 text-xs ${terrainBrush === option.id ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} key={option.id} onClick={() => setTerrainBrush(option.id)} type="button">
-                  <span className="mx-auto mb-1 block h-5 w-5 rounded-sm border border-slate-600" style={{ backgroundColor: option.color }} />
+                  <span className="mx-auto mb-1 block h-5 w-5 rounded-sm border border-slate-600" style={{ backgroundColor: option.color }}>
+                    {option.id === "__empty" ? <span className="block h-full w-full bg-[linear-gradient(135deg,transparent_45%,#94a3b8_47%,#94a3b8_53%,transparent_55%)]" /> : null}
+                  </span>
                   {option.label}
                 </button>
               ))}
@@ -181,13 +216,19 @@ const CreatorEditorPage = () => {
               <span className="text-xs text-slate-500">{buildingPage + 1}/{pageCount}</span>
             </div>
             <div className="mt-2 grid gap-2">
-              <button className={`rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === "" ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} onClick={() => setBuildingBrush("")} type="button">No building</button>
+              <button className={`rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === "" ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} onClick={() => setSelectedBuilding("")} type="button">No building</button>
               <button className={`rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === "__unchanged" ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} onClick={() => setBuildingBrush("__unchanged")} type="button">Keep building</button>
               {pagedBuildings.map((building) => (
-                <button className={`rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === building.id ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} key={building.id} onClick={() => setBuildingBrush(building.id)} type="button">
-                  {building.label}
+                <button className={`flex items-center gap-3 rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === building.id ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} key={building.id} onClick={() => setSelectedBuilding(building.id)} type="button">
+                  <BuildingPreview building={building} config={config} />
+                  <span>
+                    <span className="block font-semibold text-slate-100">{building.label}</span>
+                    <span className="text-slate-500">Place on selected tile</span>
+                  </span>
                 </button>
               ))}
+              {config && buildingOptions.length === 0 ? <p className="text-xs text-slate-500">No buildable buildings in config.</p> : null}
+              {!config ? <p className="text-xs text-slate-500">Loading building config...</p> : null}
             </div>
             <div className="mt-2 flex gap-2">
               <button className="flex-1 rounded-md border border-slate-700 px-2 py-1 text-xs disabled:opacity-40" disabled={buildingPage === 0} onClick={() => setBuildingPage((page) => Math.max(0, page - 1))} type="button">Prev</button>
@@ -219,7 +260,7 @@ const CreatorEditorPage = () => {
         <section className="relative overflow-hidden rounded-lg border border-slate-800 bg-white">
           <svg viewBox={`${-viewExtent} ${-viewExtent * 0.85} ${viewExtent * 2} ${viewExtent * 1.7}`} className="h-full w-full min-w-[48rem]">
             {allTiles.map((tile) => (
-              <CreatorHex key={tile.key} tile={tile} data={payload.tiles[tile.key] || {}} selected={selectedKey === tile.key} onClick={() => paintTile(tile.key)} config={config} />
+              <CreatorHex key={tile.key} tile={tile} data={payload.tiles[tile.key]} selected={selectedKey === tile.key} onClick={() => paintTile(tile.key)} config={config} />
             ))}
           </svg>
         </section>
@@ -229,23 +270,52 @@ const CreatorEditorPage = () => {
 };
 
 const CreatorHex = ({ tile, data, selected, onClick, config }) => {
-  const x = HEX_SIZE * Math.sqrt(3) * (tile.q + tile.r / 2);
-  const y = HEX_SIZE * 1.5 * tile.r;
-  const points = Array.from({ length: 6 }, (_, index) => {
-    const angle = (2 * Math.PI / 6) * (index - 0.5);
-    return `${x + HEX_SIZE * Math.cos(angle)},${y + HEX_SIZE * Math.sin(angle)}`;
-  });
-  const terrain = data.terrain || "neutral";
-  const fill = TERRAIN_OPTIONS.find((option) => option.id === terrain)?.color || "#ffffff";
-  const building = data.building ? config?.buildings?.[data.building] : null;
-  const nutrient = NUTRIENTS.find((item) => item.id === data.nutrient_type);
+  const { x, y } = hexCenter(tile, HEX_SIZE);
+  if (!data) {
+    return (
+      <g className="cursor-pointer transition-opacity hover:opacity-80" onClick={onClick}>
+        <polygon
+          fill="#ffffff"
+          fillOpacity="0"
+          points={hexPoints(tile, HEX_SIZE)}
+          stroke={selected ? "#fbbf24" : "#cbd5e1"}
+          strokeWidth={selected ? 3 : 1}
+        />
+      </g>
+    );
+  }
+  const renderedTile = {
+    ...tile,
+    terrain: data.terrain || "neutral",
+    hydration: Number(data.hydration || 0),
+    building: data.building || null,
+    building_upgrade: data.building_upgrade || null,
+    nutrient_type: data.nutrient_type || null,
+    stress: 0,
+    terrain_stress: 0,
+  };
   return (
-    <g className="cursor-pointer" onClick={onClick}>
-      <polygon fill={fill} points={points.join(" ")} stroke={selected ? "#f59e0b" : "#cbd5e1"} strokeWidth={selected ? 3 : 1} />
-      {nutrient?.id ? <circle cx={x + 10} cy={y - 9} fill={nutrient.color} r="4" /> : null}
-      {building ? <text fill="#0f172a" fontSize="9" fontWeight="700" textAnchor="middle" x={x} y={y + 3}>{building.label.slice(0, 2)}</text> : null}
+    <g>
+      <HexTile config={config} isSelected={selected} onSelect={onClick} showStress={false} size={HEX_SIZE} tile={renderedTile} />
       {data.hydration ? <text fill="#0f172a" fontSize="8" textAnchor="middle" x={x} y={y + 14}>{data.hydration > 0 ? `+${data.hydration}` : data.hydration}</text> : null}
     </g>
+  );
+};
+
+const BuildingPreview = ({ building, config }) => {
+  const tile = {
+    q: 0,
+    r: 0,
+    terrain: "neutral",
+    hydration: 0,
+    building: building.id,
+    building_upgrade: null,
+    nutrient_type: building.id === "assimilator" ? "purple" : null,
+  };
+  return (
+    <svg viewBox="-18 -18 36 36" className="h-9 w-9 shrink-0 rounded border border-slate-700 bg-slate-800">
+      <BuildingGlyph building={building} config={config} tile={tile} x={0} y={0} size={22} />
+    </svg>
   );
 };
 
