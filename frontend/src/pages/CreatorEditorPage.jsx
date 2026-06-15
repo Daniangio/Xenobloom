@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import HexTile, { BuildingGlyph, hexCenter, hexPoints, hydrationColor } from "../components/HexTile.jsx";
+import HexBoardViewport from "../components/HexBoardViewport.jsx";
+import HexTile, { BuildingGlyph, HydrationSquares, hexBoardBounds, hexCenter, hexPoints, hydrationColor } from "../components/HexTile.jsx";
 import { useStore } from "../store.js";
 import { buildApiUrl } from "../utils/connection.js";
 
@@ -25,6 +26,11 @@ const defaultPayload = () => ({
 });
 
 const tileKey = (q, r) => `${q},${r}`;
+const EDITOR_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "tiles", label: "Tiles" },
+  { id: "buildings", label: "Buildings" },
+];
 
 const CreatorEditorPage = () => {
   const { creationId } = useParams();
@@ -40,8 +46,11 @@ const CreatorEditorPage = () => {
   const [buildingBrush, setBuildingBrush] = useState("");
   const [buildingPage, setBuildingPage] = useState(0);
   const [editorRadius, setEditorRadius] = useState(10);
+  const [activeTab, setActiveTab] = useState("overview");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const isPaintingRef = useRef(false);
+  const lastPaintedKeyRef = useRef("");
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -87,14 +96,17 @@ const CreatorEditorPage = () => {
   }, [editorRadius]);
 
   const buildingOptions = useMemo(
-    () => Object.values(config?.buildings || {}).filter((building) => building.buildable !== false),
+    () => Object.values(config?.buildings || {}).filter((building) => building.buildable !== false || building.id === "core"),
     [config]
   );
-  const buildingPageSize = 5;
+  const buildingPageSize = 4;
   const pagedBuildings = buildingOptions.slice(buildingPage * buildingPageSize, (buildingPage + 1) * buildingPageSize);
   const pageCount = Math.max(1, Math.ceil(buildingOptions.length / buildingPageSize));
   const selectedTile = payload.tiles[selectedKey] || {};
-  const viewExtent = Math.max(500, editorRadius * HEX_SIZE * 2.1);
+  const paintedTileCount = Object.keys(payload.tiles || {}).length;
+  const buildingCount = Object.values(payload.tiles || {}).filter((tile) => tile?.building).length;
+  const nutrientCount = Object.values(payload.tiles || {}).filter((tile) => tile?.nutrient_type).length;
+  const boardBounds = useMemo(() => hexBoardBounds(allTiles, HEX_SIZE, HEX_SIZE * 3), [allTiles]);
 
   const updateTile = (key, updater) => {
     setPayload((current) => {
@@ -120,8 +132,21 @@ const CreatorEditorPage = () => {
     });
   };
 
-  const paintTile = (key) => {
+  const editTileFromBoard = (key) => {
     setSelectedKey(key);
+    if (activeTab !== "tiles" && activeTab !== "buildings") return;
+    if (lastPaintedKeyRef.current === key) return;
+    lastPaintedKeyRef.current = key;
+
+    if (activeTab === "buildings") {
+      if (buildingBrush === "__unchanged") return;
+      updateTile(key, (tile) => {
+        tile.building = buildingBrush || null;
+        if (buildingBrush && !tile.terrain) tile.terrain = "neutral";
+      });
+      return;
+    }
+
     if (terrainBrush === "__empty") {
       setPayload((current) => {
         const nextTiles = { ...current.tiles };
@@ -132,8 +157,23 @@ const CreatorEditorPage = () => {
     }
     updateTile(key, (tile) => {
       tile.terrain = terrainBrush;
-      if (buildingBrush !== "__unchanged") tile.building = buildingBrush || null;
     });
+  };
+
+  const startPainting = (key) => {
+    isPaintingRef.current = activeTab === "tiles" || activeTab === "buildings";
+    lastPaintedKeyRef.current = "";
+    editTileFromBoard(key);
+  };
+
+  const continuePainting = (key) => {
+    if (!isPaintingRef.current) return;
+    editTileFromBoard(key);
+  };
+
+  const stopPainting = () => {
+    isPaintingRef.current = false;
+    lastPaintedKeyRef.current = "";
   };
 
   const setSelectedBuilding = (buildingId) => {
@@ -171,6 +211,21 @@ const CreatorEditorPage = () => {
     <main className="min-h-screen bg-slate-950 p-4 text-slate-100">
       <div className="mx-auto grid h-[calc(100vh-2rem)] max-w-7xl gap-4 lg:grid-cols-[21rem_1fr]">
         <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <div className="grid grid-cols-3 gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
+            {EDITOR_TABS.map((tab) => (
+              <button
+                className={`rounded-md px-2 py-2 text-xs font-semibold ${activeTab === tab.id ? "bg-teal-300 text-slate-950" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                type="button"
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === "overview" ? (
+          <>
           <section>
             <h1 className="text-xl font-semibold text-white">Map Creator</h1>
             {error ? <p className="mt-3 rounded-md bg-rose-950/70 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
@@ -181,6 +236,34 @@ const CreatorEditorPage = () => {
             </button>
           </section>
 
+          <section className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+            <h2 className="text-sm font-semibold text-white">Summary</h2>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <SummaryStat label="Tiles" value={paintedTileCount} />
+              <SummaryStat label="Nutrients" value={nutrientCount} />
+              <SummaryStat label="Buildings" value={buildingCount} />
+            </div>
+            <p className="mt-3 font-mono text-xs text-slate-500">Selected [{selectedKey}]</p>
+          </section>
+
+          <section>
+            <h2 className="text-sm font-semibold text-white">Goals</h2>
+            <label className="mt-2 block text-xs text-slate-400">Mode</label>
+            <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm" value={payload.goals?.mode || "all"} onChange={(event) => setPayload((current) => ({ ...current, goals: { ...current.goals, mode: event.target.value } }))}>
+              <option value="all">Reach score before phase limit</option>
+              <option value="survive">Survive phases</option>
+              <option value="any">Either score or survival</option>
+            </select>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <input className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm" type="number" min="1" value={payload.goals?.survive_phases || 25} onChange={(event) => setPayload((current) => ({ ...current, goals: { ...current.goals, survive_phases: Number(event.target.value) } }))} />
+              <input className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm" type="number" min="1" value={payload.goals?.target_maturity || 1000} onChange={(event) => setPayload((current) => ({ ...current, goals: { ...current.goals, target_maturity: Number(event.target.value) } }))} />
+            </div>
+          </section>
+          </>
+          ) : null}
+
+          {activeTab === "tiles" ? (
+          <>
           <section>
             <h2 className="text-sm font-semibold text-white">Tiles</h2>
             <div className="mt-2 grid grid-cols-3 gap-2">
@@ -198,8 +281,18 @@ const CreatorEditorPage = () => {
           <section>
             <h2 className="text-sm font-semibold text-white">Selected Tile</h2>
             <p className="mt-1 font-mono text-xs text-slate-500">[{selectedKey}]</p>
-            <label className="mt-3 block text-xs text-slate-400">Hydration</label>
-            <input className="mt-1 w-full" type="range" min="-3" max="3" value={Number(selectedTile.hydration || 0)} onChange={(event) => updateTile(selectedKey, (tile) => { tile.hydration = Number(event.target.value); })} />
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <span className="text-xs font-semibold text-slate-400">Hydration</span>
+              <span className="text-xs text-slate-500">{Number(selectedTile.hydration || 0) > 0 ? "+" : ""}{Number(selectedTile.hydration || 0)}</span>
+            </div>
+            <div className="mt-2">
+              <HydrationSquares
+                interactive
+                onChange={(value) => updateTile(selectedKey, (tile) => { tile.hydration = value; })}
+                sizeClass="h-4 w-4"
+                value={Number(selectedTile.hydration || 0)}
+              />
+            </div>
             <div className="mt-2 grid grid-cols-4 gap-2">
               {NUTRIENTS.map((nutrient) => (
                 <button className={`rounded-md border px-2 py-2 text-xs ${selectedTile.nutrient_type === nutrient.id || (!selectedTile.nutrient_type && nutrient.id === null) ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} key={nutrient.label} onClick={() => updateTile(selectedKey, (tile) => { tile.nutrient_type = nutrient.id; })} type="button">
@@ -209,7 +302,10 @@ const CreatorEditorPage = () => {
               ))}
             </div>
           </section>
+          </>
+          ) : null}
 
+          {activeTab === "buildings" ? (
           <section className="min-h-0">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-white">Buildings</h2>
@@ -217,7 +313,6 @@ const CreatorEditorPage = () => {
             </div>
             <div className="mt-2 grid gap-2">
               <button className={`rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === "" ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} onClick={() => setSelectedBuilding("")} type="button">No building</button>
-              <button className={`rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === "__unchanged" ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} onClick={() => setBuildingBrush("__unchanged")} type="button">Keep building</button>
               {pagedBuildings.map((building) => (
                 <button className={`flex items-center gap-3 rounded-md border px-3 py-2 text-left text-xs ${buildingBrush === building.id ? "border-teal-300 bg-slate-800" : "border-slate-700"}`} key={building.id} onClick={() => setSelectedBuilding(building.id)} type="button">
                   <BuildingPreview building={building} config={config} />
@@ -227,7 +322,7 @@ const CreatorEditorPage = () => {
                   </span>
                 </button>
               ))}
-              {config && buildingOptions.length === 0 ? <p className="text-xs text-slate-500">No buildable buildings in config.</p> : null}
+              {config && buildingOptions.length === 0 ? <p className="text-xs text-slate-500">No buildings in config.</p> : null}
               {!config ? <p className="text-xs text-slate-500">Loading building config...</p> : null}
             </div>
             <div className="mt-2 flex gap-2">
@@ -235,20 +330,7 @@ const CreatorEditorPage = () => {
               <button className="flex-1 rounded-md border border-slate-700 px-2 py-1 text-xs disabled:opacity-40" disabled={buildingPage >= pageCount - 1} onClick={() => setBuildingPage((page) => Math.min(pageCount - 1, page + 1))} type="button">Next</button>
             </div>
           </section>
-
-          <section>
-            <h2 className="text-sm font-semibold text-white">Goals</h2>
-            <label className="mt-2 block text-xs text-slate-400">Mode</label>
-            <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm" value={payload.goals?.mode || "all"} onChange={(event) => setPayload((current) => ({ ...current, goals: { ...current.goals, mode: event.target.value } }))}>
-              <option value="all">Reach score before phase limit</option>
-              <option value="survive">Survive phases</option>
-              <option value="any">Either score or survival</option>
-            </select>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <input className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm" type="number" min="1" value={payload.goals?.survive_phases || 25} onChange={(event) => setPayload((current) => ({ ...current, goals: { ...current.goals, survive_phases: Number(event.target.value) } }))} />
-              <input className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm" type="number" min="1" value={payload.goals?.target_maturity || 1000} onChange={(event) => setPayload((current) => ({ ...current, goals: { ...current.goals, target_maturity: Number(event.target.value) } }))} />
-            </div>
-          </section>
+          ) : null}
 
           <section className="grid grid-cols-3 gap-2">
             <button className="rounded-md border border-slate-700 px-3 py-2 text-sm" onClick={() => navigate("/creator")} type="button">Back</button>
@@ -258,22 +340,41 @@ const CreatorEditorPage = () => {
         </aside>
 
         <section className="relative overflow-hidden rounded-lg border border-slate-800 bg-white">
-          <svg viewBox={`${-viewExtent} ${-viewExtent * 0.85} ${viewExtent * 2} ${viewExtent * 1.7}`} className="h-full w-full min-w-[48rem]">
+          <HexBoardViewport
+            bounds={boardBounds}
+            onContextMenu={(event) => event.preventDefault()}
+            onPointerCancel={stopPainting}
+            onPointerLeave={stopPainting}
+            onPointerUp={stopPainting}
+            svgClassName="select-none"
+          >
             {allTiles.map((tile) => (
-              <CreatorHex key={tile.key} tile={tile} data={payload.tiles[tile.key]} selected={selectedKey === tile.key} onClick={() => paintTile(tile.key)} config={config} />
+              <CreatorHex
+                config={config}
+                data={payload.tiles[tile.key]}
+                key={tile.key}
+                onPointerDown={() => startPainting(tile.key)}
+                onPointerEnter={() => continuePainting(tile.key)}
+                selected={selectedKey === tile.key}
+                tile={tile}
+              />
             ))}
-          </svg>
+          </HexBoardViewport>
         </section>
       </div>
     </main>
   );
 };
 
-const CreatorHex = ({ tile, data, selected, onClick, config }) => {
+const CreatorHex = ({ tile, data, selected, onPointerDown, onPointerEnter, config }) => {
   const { x, y } = hexCenter(tile, HEX_SIZE);
   if (!data) {
     return (
-      <g className="cursor-pointer transition-opacity hover:opacity-80" onClick={onClick}>
+      <g
+        className="cursor-pointer transition-opacity hover:opacity-80"
+        onPointerDown={onPointerDown}
+        onPointerEnter={onPointerEnter}
+      >
         <polygon
           fill="#ffffff"
           fillOpacity="0"
@@ -295,12 +396,19 @@ const CreatorHex = ({ tile, data, selected, onClick, config }) => {
     terrain_stress: 0,
   };
   return (
-    <g>
-      <HexTile config={config} isSelected={selected} onSelect={onClick} showStress={false} size={HEX_SIZE} tile={renderedTile} />
+    <g onPointerDown={onPointerDown} onPointerEnter={onPointerEnter}>
+      <HexTile config={config} isSelected={selected} onSelect={() => {}} showStress={false} size={HEX_SIZE} tile={renderedTile} />
       {data.hydration ? <text fill="#0f172a" fontSize="8" textAnchor="middle" x={x} y={y + 14}>{data.hydration > 0 ? `+${data.hydration}` : data.hydration}</text> : null}
     </g>
   );
 };
+
+const SummaryStat = ({ label, value }) => (
+  <div className="rounded-md border border-slate-800 bg-slate-900 px-2 py-2">
+    <div className="text-lg font-semibold text-white">{value}</div>
+    <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">{label}</div>
+  </div>
+);
 
 const BuildingPreview = ({ building, config }) => {
   const tile = {

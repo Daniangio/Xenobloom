@@ -17,6 +17,46 @@ export const hydrationColor = (hydration) => {
   return colors[String(hydration)] || "#718096";
 };
 
+export const HydrationSquares = ({
+  value,
+  min = -3,
+  max = 3,
+  interactive = false,
+  onChange = null,
+  sizeClass = "h-3 w-3",
+}) => {
+  const nodes = [];
+  for (let current = min; current <= max; current += 1) {
+    const active = value === 0
+      ? current === 0
+      : value < 0
+        ? current >= value && current <= 0
+        : current <= value && current >= 0;
+    const square = (
+      <span
+        className={`${sizeClass} rounded-sm border border-slate-700 ${active ? "" : "bg-slate-900"}`}
+        style={active ? { backgroundColor: hydrationColor(current) } : undefined}
+      />
+    );
+    nodes.push(
+      interactive ? (
+        <button
+          className="rounded-sm p-1 hover:bg-slate-800"
+          key={current}
+          onClick={() => onChange?.(current)}
+          title={`Hydration ${current > 0 ? `+${current}` : current}`}
+          type="button"
+        >
+          {square}
+        </button>
+      ) : (
+        <span key={current}>{square}</span>
+      )
+    );
+  }
+  return <span className="flex items-center gap-1">{nodes}</span>;
+};
+
 export const tileStress = (tile) => {
   if (!tile) return 0;
   const buildingStress = Number(tile.stress || 0);
@@ -35,6 +75,21 @@ export const hexPoints = ({ q, r }, size) => {
     const angle = (2 * Math.PI / 6) * (index - 0.5);
     return `${x + size * Math.cos(angle)},${y + size * Math.sin(angle)}`;
   }).join(" ");
+};
+
+export const hexBoardBounds = (tiles, size, padding = size * 2) => {
+  const list = Array.isArray(tiles) && tiles.length ? tiles : [{ q: 0, r: 0 }];
+  const centers = list.map((tile) => hexCenter(tile, size));
+  const minX = Math.min(...centers.map((center) => center.x)) - size - padding;
+  const maxX = Math.max(...centers.map((center) => center.x)) + size + padding;
+  const minY = Math.min(...centers.map((center) => center.y)) - size - padding;
+  const maxY = Math.max(...centers.map((center) => center.y)) + size + padding;
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(size * 8, maxX - minX),
+    height: Math.max(size * 8, maxY - minY),
+  };
 };
 
 export const BuildingGlyph = ({ building, config, tile, x, y, size = 22 }) => {

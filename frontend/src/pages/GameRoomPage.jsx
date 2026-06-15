@@ -12,7 +12,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import HexTile, { NUTRIENT_COLORS, tileStress } from "../components/HexTile.jsx";
+import HexBoardViewport from "../components/HexBoardViewport.jsx";
+import HexTile, { HydrationSquares, NUTRIENT_COLORS, hexBoardBounds, tileStress } from "../components/HexTile.jsx";
 import { useStore } from "../store.js";
 import { buildApiUrl } from "../utils/connection.js";
 
@@ -114,6 +115,7 @@ const GameRoomPage = () => {
     () => Object.values(gameState?.grid || {}).sort((a, b) => a.r - b.r || a.q - b.q),
     [gameState?.grid]
   );
+  const boardBounds = useMemo(() => hexBoardBounds(sortedTiles, 22, 36), [sortedTiles]);
 
   const openElementDetails = () => {
     if (selectedElement) setDetailContext({ mode: "element", element: selectedElement });
@@ -212,7 +214,7 @@ const GameRoomPage = () => {
           <WindField windLabel={gameState?.wind_label} />
           <TopBoardPanel busy={busy} endGame={endGame} gameState={gameState} submitCommand={submitCommand} />
           <WindIndicator windLabel={gameState?.wind_label} />
-          <svg viewBox="-250 -205 500 410" className="relative z-[1] h-full w-full min-w-[36rem]">
+          <HexBoardViewport bounds={boardBounds} className="relative z-[1]" controlsClassName="right-4 top-16">
             {sortedTiles.map((tile) => (
               <HexTile
                 config={gameState?.config}
@@ -222,7 +224,7 @@ const GameRoomPage = () => {
                 tile={tile}
               />
             ))}
-          </svg>
+          </HexBoardViewport>
           <BottomResourcePanel gameState={gameState} />
         </section>
       </div>
@@ -337,7 +339,7 @@ const WindField = ({ windLabel }) => {
 const WindIndicator = ({ windLabel }) => {
   const angle = WIND_ROTATION[windLabel] ?? 90;
   return (
-    <div className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/95 px-3 py-2 shadow-xl">
+    <div className="absolute right-2 bottom-2 z-10 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/95 px-3 py-2 shadow-xl">
       <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-sky-200">
         <ArrowUp size={18} style={{ transform: `rotate(${angle}deg)` }} />
       </span>
@@ -687,20 +689,10 @@ const ConditionChips = ({ conditions }) => {
 };
 
 const BipolarStat = ({ icon, label, value, range, compact = false }) => {
-  const nodes = [];
-  for (let current = range.min; current <= range.max; current += 1) {
-    const active = value === 0 ? current === 0 : value < 0 ? current >= value && current <= 0 : current <= value && current >= 0;
-    nodes.push(
-      <span
-        className={`${compact ? "h-2 w-2" : "h-3 w-3"} rounded-sm border border-slate-700 ${active ? (current < 0 ? "bg-rose-500" : current > 0 ? "bg-blue-400" : "bg-slate-300") : "bg-slate-900"}`}
-        key={current}
-      />
-    );
-  }
   return (
     <div className={`flex ${compact ? "items-center gap-2" : "flex-col gap-1"}`}>
       <span className="flex items-center gap-1 text-xs font-semibold text-slate-400">{icon}{label}</span>
-      <span className="flex items-center gap-1">{nodes}</span>
+      <HydrationSquares max={range.max} min={range.min} sizeClass={compact ? "h-2 w-2" : "h-3 w-3"} value={value} />
       <span className="text-xs text-slate-500">{value > 0 ? "+" : ""}{value}</span>
     </div>
   );
