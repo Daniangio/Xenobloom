@@ -16,11 +16,14 @@ import {
 } from "../lib/firebase.js";
 import AdminPage from "../pages/AdminPage.jsx";
 import AuthPage from "../pages/AuthPage.jsx";
+import CreatorEditorPage from "../pages/CreatorEditorPage.jsx";
+import CreatorPage from "../pages/CreatorPage.jsx";
 import FriendsPage from "../pages/FriendsPage.jsx";
 import GameHistoryPage from "../pages/GameHistoryPage.jsx";
 import GameRoomPage from "../pages/GameRoomPage.jsx";
 import LobbyPage from "../pages/LobbyPage.jsx";
 import PlayPage from "../pages/PlayPage.jsx";
+import PlayCreationsPage from "../pages/PlayCreationsPage.jsx";
 import PostGamePage from "../pages/PostGamePage.jsx";
 import ProfilePage from "../pages/ProfilePage.jsx";
 import SoloPlayPage from "../pages/SoloPlayPage.jsx";
@@ -238,6 +241,10 @@ function AppContent() {
           <Route path="/lobby" element={authenticatedPage(<LobbyPage />)} />
           <Route path="/play" element={authenticatedPage(<PlayPage />)} />
           <Route path="/play/solo" element={authenticatedPage(<SoloPlayPage />)} />
+          <Route path="/play/creations" element={authenticatedPage(<PlayCreationsPage />)} />
+          <Route path="/creator" element={authenticatedPage(<CreatorPage />)} />
+          <Route path="/creator/new" element={authenticatedPage(<CreatorEditorPage />)} />
+          <Route path="/creator/:creationId/edit" element={authenticatedPage(<CreatorEditorPage />)} />
           <Route path="/profile/:userId" element={authenticatedPage(<ProfilePage />)} />
           <Route path="/profile/:userId/friends" element={authenticatedPage(<FriendsPage />)} />
           <Route path="/profile/:userId/history" element={authenticatedPage(<GameHistoryPage />)} />

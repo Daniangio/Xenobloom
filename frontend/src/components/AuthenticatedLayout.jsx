@@ -69,6 +69,14 @@ const AuthenticatedLayout = ({ children, onLogout }) => {
             >
               Play
             </NavLink>
+            <NavLink
+              to="/creator"
+              className={({ isActive }) =>
+                `${topNavBase} ${isActive ? topNavActive : topNavInactive}`
+              }
+            >
+              Creator
+            </NavLink>
             {user?.is_admin ? (
               <NavLink
                 to="/admin"

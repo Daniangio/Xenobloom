@@ -44,10 +44,20 @@ class GameEngine:
         self.config = config or get_game_config()
         self.rules = self.config.rules
 
-    def create_initial_state(self, *, seed: int | None = None) -> dict[str, Any]:
+    def create_initial_state(self, *, seed: int | None = None, creation: dict[str, Any] | None = None) -> dict[str, Any]:
         actual_seed = int(seed if seed is not None else time.time_ns() % 2_147_483_647)
         rng = random.Random(actual_seed)
-        radius = int(self.rules["map_radius"])
+        creation_payload = creation or {}
+        creation_tiles = creation_payload.get("tiles") or {}
+        creation_goals = creation_payload.get("goals") or {}
+        creation_radius = 0
+        for key in creation_tiles:
+            try:
+                q, r = [int(part) for part in str(key).split(",", 1)]
+            except ValueError:
+                continue
+            creation_radius = max(creation_radius, hex_distance(0, 0, q, r))
+        radius = max(int(self.rules["map_radius"]), creation_radius + 2)
         grid: dict[str, dict[str, Any]] = {}
         for q in range(-radius, radius + 1):
             min_r = max(-radius, -q - radius)
@@ -109,6 +119,45 @@ class GameEngine:
                 lambda h, nutrient_type=nutrient_type: h.update({"nutrient_type": nutrient_type}),
             )
 
+        if creation:
+            for tile in grid.values():
+                tile.update({
+                    "terrain": "neutral",
+                    "hydration": 0,
+                    "building": None,
+                    "building_upgrade": None,
+                    "stress": 0,
+                    "terrain_stress": 0,
+                    "nutrient_type": None,
+                    "extraction_progress": 0,
+                })
+            for key, override in creation_tiles.items():
+                try:
+                    q, r = [int(part) for part in str(key).split(",", 1)]
+                except ValueError:
+                    continue
+                tile = grid.setdefault(
+                    hex_key(q, r),
+                    {
+                        "q": q,
+                        "r": r,
+                        "terrain": "neutral",
+                        "hydration": 0,
+                        "building": None,
+                        "building_upgrade": None,
+                        "stress": 0,
+                        "terrain_stress": 0,
+                        "nutrient_type": None,
+                        "extraction_progress": 0,
+                    },
+                )
+                for field in ("terrain", "hydration", "nutrient_type", "building", "building_upgrade"):
+                    if field in override:
+                        tile[field] = override[field]
+                tile["hydration"] = self._clamp_hydration(int(tile.get("hydration") or 0), tile.get("terrain"))
+            if not any(tile.get("building") == "core" for tile in grid.values()):
+                grid[core_key]["building"] = "core"
+
         initial_state = {
             "schema_version": 1,
             "config_id": self.rules["id"],
@@ -120,6 +169,11 @@ class GameEngine:
             "wind_dir": rng.randrange(0, len(DIRECTIONS)),
             "actions_left": int(self.rules["actions_per_season"]),
             "maturity": 0,
+            "goals": {
+                "mode": str(creation_goals.get("mode") or "all"),
+                "survive_phases": int(creation_goals.get("survive_phases") or self.rules["max_seasons"]),
+                "target_maturity": int(creation_goals.get("target_maturity") or self.rules["target_maturity"]),
+            },
             "base_economy": {"prod": 0, "sustain": 0},
             "spent_life": 0,
             "strains": {nutrient_type: 0 for nutrient_type in NUTRIENT_TYPES},
@@ -146,13 +200,14 @@ class GameEngine:
         selected = state["grid"].get(selected_tile or "")
         connected_keys = self._connected_building_keys(state)
         strains = self._strain_counts(state)
+        goals = self._goals(state)
         return {
             "revision": int(state.get("revision") or 0),
             "phase": state.get("phase", "IN_GAME"),
             "game_over": state.get("game_over"),
             "season": int(state.get("season") or 1),
-            "max_seasons": int(self.rules["max_seasons"]),
-            "target_maturity": int(self.rules["target_maturity"]),
+            "max_seasons": int(goals["survive_phases"]),
+            "target_maturity": int(goals["target_maturity"]),
             "wind_dir": int(state.get("wind_dir") or 0),
             "wind_label": DIRECTIONS[int(state.get("wind_dir") or 0)]["name"],
             "actions_left": int(state.get("actions_left") or 0),
@@ -443,14 +498,15 @@ class GameEngine:
         for message in reversed(turn_logs):
             self._add_log(state, message)
 
+        goals = self._goals(state)
         if core_died:
             state["game_over"] = "lose"
             state["phase"] = "FINISHED"
-        elif int(state["maturity"]) >= int(self.rules["target_maturity"]):
+        elif int(state["maturity"]) >= int(goals["target_maturity"]):
             state["game_over"] = "win"
             state["phase"] = "FINISHED"
-        elif season >= int(self.rules["max_seasons"]):
-            state["game_over"] = "lose"
+        elif season >= int(goals["survive_phases"]):
+            state["game_over"] = "win" if str(goals.get("mode") or "all") in {"survive", "any"} else "lose"
             state["phase"] = "FINISHED"
 
     def _resolve_condensers(
@@ -863,6 +919,14 @@ class GameEngine:
         triplets = min(int(strains.get("green") or 0), int(strains.get("blue") or 0), int(strains.get("purple") or 0))
         quadratic = sum(int(strains.get(nutrient_type) or 0) ** 2 for nutrient_type in NUTRIENT_TYPES)
         return quadratic + triplets * int(self.rules["strain_triplet_maturity_bonus"])
+
+    def _goals(self, state: dict[str, Any]) -> dict[str, Any]:
+        source = state.get("goals") or {}
+        return {
+            "mode": str(source.get("mode") or "all"),
+            "survive_phases": int(source.get("survive_phases") or self.rules["max_seasons"]),
+            "target_maturity": int(source.get("target_maturity") or self.rules["target_maturity"]),
+        }
 
     def _is_forest_aura(self, state: dict[str, Any], tile: dict[str, Any]) -> bool:
         if tile.get("terrain") == "forest":

@@ -9,16 +9,18 @@ from .routers import router as auth_router
 from .player_router import router as player_router
 from .admin_router import router as admin_router
 from .game_router import router as game_router
+from .creator_router import router as creator_router
 from .database import init_database, SessionLocal
 from .config import settings
 from .firebase_auth import initialize_firebase_admin
 from .redis_client import close_redis, init_redis
 from .account_bootstrap import bootstrap_all_registered_users
 from .game_room_service import GameRoomService, GameWorker
+from .creation_service import CreationService
 from .presence_service import PresenceService
 from .websocket_session_router import WebSocketSessionRouter
 from .websocket_gateway import WebSocketGateway
-from .runtime_state import set_connection_manager, set_game_room_service, set_presence_service
+from .runtime_state import set_connection_manager, set_creation_service, set_game_room_service, set_presence_service
 
 app = FastAPI()
 
@@ -38,6 +40,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(player_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(game_router, prefix="/api")
+app.include_router(creator_router, prefix="/api")
 
 connection_manager = ConnectionManager()
 presence_service = PresenceService(ttl_seconds=settings.PRESENCE_TTL_SECONDS)
@@ -47,6 +50,7 @@ chat_service = ChatService(
     history_limit=settings.CHAT_HISTORY_LIMIT,
 )
 game_room_service = GameRoomService()
+creation_service = CreationService()
 game_worker = GameWorker(game_room_service)
 websocket_session_router = WebSocketSessionRouter(
     connection_manager=connection_manager,
@@ -61,6 +65,7 @@ websocket_gateway = WebSocketGateway(
 set_presence_service(presence_service)
 set_connection_manager(connection_manager)
 set_game_room_service(game_room_service)
+set_creation_service(creation_service)
 
 
 async def _wait_for_redis(*, attempts: int = 20, delay_seconds: float = 0.5):
@@ -79,6 +84,7 @@ async def startup_event():
     presence_service.configure_redis(redis_client)
     chat_service.configure_redis(redis_client)
     game_room_service.configure_redis(redis_client)
+    creation_service.configure_redis(redis_client)
     game_worker.start()
     initialize_firebase_admin()
     if settings.AUTO_CREATE_SCHEMA:

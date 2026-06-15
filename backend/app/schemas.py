@@ -63,6 +63,7 @@ class LobbyStateResponse(BaseModel):
 class GameRoomCreateRequest(BaseModel):
     mode: str = "solo"
     game_type: str = "quick_match"
+    creation_id: Optional[str] = None
 
 
 class GameRoomResponse(BaseModel):
@@ -134,6 +135,42 @@ class GameResultResponse(BaseModel):
 
 class GameHistoryResponse(BaseModel):
     results: List[GameResultResponse]
+
+
+class CreationPayload(BaseModel):
+    version: int = 1
+    tiles: Dict[str, Dict[str, Any]] = {}
+    goals: Dict[str, Any] = {}
+
+
+class CreationCreateRequest(BaseModel):
+    name: str = "Untitled Creation"
+    description: str = ""
+    payload: Optional[CreationPayload] = None
+
+
+class CreationUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    payload: Optional[CreationPayload] = None
+    publish: Optional[bool] = None
+
+
+class CreationResponse(BaseModel):
+    id: str
+    owner_user_id: str
+    owner_username: str = ""
+    name: str
+    description: str = ""
+    status: str
+    created_at: str
+    updated_at: str
+    published_at: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+
+
+class CreationListResponse(BaseModel):
+    creations: List[CreationResponse]
 
 
 class AuthMeResponse(BaseModel):

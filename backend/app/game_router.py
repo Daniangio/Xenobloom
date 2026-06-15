@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from .runtime_state import get_game_room_service
+from .runtime_state import get_creation_service, get_game_room_service
+from .game_config_loader import get_game_config
 from .schemas import (
     GameCommandQueuedResponse,
     GameCommandRequest,
@@ -32,9 +33,25 @@ async def create_game_room(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        return await _service().create_room(user=current_user, game_type=payload.game_type)
+        creation = None
+        if str(payload.game_type or "") == "creation":
+            creation_service = get_creation_service()
+            if creation_service is None:
+                raise ValueError("Creation service is unavailable.")
+            creation = await creation_service.get_creation(
+                creation_id=str(payload.creation_id or ""),
+                require_published=True,
+            )
+            if creation is None:
+                raise ValueError("Creation not found or is not published.")
+        return await _service().create_room(user=current_user, game_type=payload.game_type, creation=creation)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/game/config")
+async def get_game_config_payload(current_user: User = Depends(get_current_user)):
+    return get_game_config().public_payload()
 
 
 @router.get("/game/rooms/{room_id}", response_model=GameRoomResponse)

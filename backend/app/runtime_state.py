@@ -6,6 +6,7 @@ from typing import Optional
 _presence_service = None
 _connection_manager = None
 _game_room_service = None
+_creation_service = None
 
 
 def set_presence_service(service) -> None:
@@ -33,3 +34,12 @@ def set_game_room_service(service) -> None:
 
 def get_game_room_service():
     return _game_room_service
+
+
+def set_creation_service(service) -> None:
+    global _creation_service
+    _creation_service = service
+
+
+def get_creation_service():
+    return _creation_service

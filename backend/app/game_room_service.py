@@ -67,10 +67,12 @@ class GameRoomService:
     def configure_redis(self, redis_client) -> None:
         self.redis = redis_client
 
-    async def create_room(self, *, user: User, game_type: str) -> dict[str, Any]:
+    async def create_room(self, *, user: User, game_type: str, creation: dict[str, Any] | None = None) -> dict[str, Any]:
         normalized_game_type = str(game_type or "quick_match").strip() or "quick_match"
-        if normalized_game_type != "quick_match":
-            raise ValueError("Only quick match is available right now.")
+        if normalized_game_type not in {"quick_match", "creation"}:
+            raise ValueError("Only quick match and creations are available right now.")
+        if normalized_game_type == "creation" and not creation:
+            raise ValueError("Creation not found or is not published.")
         room_id = f"solo_{uuid.uuid4().hex[:16]}"
         now = _now_iso()
         room = {
@@ -79,6 +81,7 @@ class GameRoomService:
             "owner_username": user.username or user.email or user.id,
             "mode": "solo",
             "game_type": normalized_game_type,
+            "creation_id": str((creation or {}).get("id") or ""),
             "state": ROOM_STATE_IN_GAME,
             "created_at": now,
             "started_at": now,
@@ -87,10 +90,10 @@ class GameRoomService:
         }
         if self.redis is None:
             self._memory_rooms[room_id] = room
-            self._memory_states[room_id] = self.engine.create_initial_state()
+            self._memory_states[room_id] = self.engine.create_initial_state(creation=(creation or {}).get("payload") if creation else None)
             return _public_room(room)
         await self.redis.hset(_room_key(room_id), mapping=room)
-        await self._save_state(room_id, self.engine.create_initial_state())
+        await self._save_state(room_id, self.engine.create_initial_state(creation=(creation or {}).get("payload") if creation else None))
         return _public_room(room)
 
     async def get_room(self, *, room_id: str, user: User) -> dict[str, Any] | None:

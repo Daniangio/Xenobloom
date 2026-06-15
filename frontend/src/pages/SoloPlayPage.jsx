@@ -4,7 +4,10 @@ import { PageSubnavigation } from "../components/AuthenticatedLayout.jsx";
 import { useStore } from "../store.js";
 import { buildApiUrl } from "../utils/connection.js";
 
-const playSubnavItems = [{ label: "Solo Play", to: "/play/solo" }];
+const playSubnavItems = [
+  { label: "Solo Play", to: "/play/solo" },
+  { label: "Creations", to: "/play/creations" },
+];
 
 const SoloPlayPage = () => {
   const { token } = useStore();

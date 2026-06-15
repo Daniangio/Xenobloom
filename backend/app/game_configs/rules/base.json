@@ -8,7 +8,7 @@
   "initial_forests": 3,
   "initial_moist_tiles": 5,
   "initial_drought_centers": 3,
-  "initial_nutrients_per_type": 2,
+  "initial_nutrients_per_type": 3,
   "hydration_min": -3,
   "hydration_max": 3,
   "strain_threshold": 5,
