@@ -1,0 +1,8 @@
+{
+  "id": "expanded_aquifer_network",
+  "label": "Expanded Aquifer Network",
+  "cost_life": 5,
+  "cost_actions": 1,
+  "effect": "aquifer_pool_max_delta",
+  "pool_max_delta": 5
+}

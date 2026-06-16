@@ -14,7 +14,7 @@
       "id": "assimilator_extract_strain",
       "type": "strain_extraction",
       "specs": {
-        "threshold": 5,
+        "thresholds": [5, 6, 8, 10],
         "open_neighbors": {
           "high_min": 4,
           "high_value": 2,

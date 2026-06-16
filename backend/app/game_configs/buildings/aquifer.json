@@ -1,0 +1,26 @@
+{
+  "id": "aquifer",
+  "label": "Aquifer Node",
+  "shape": "diamond",
+  "color": "#38bdf8",
+  "tags": ["Support", "Root"],
+  "build_cost_life": 1,
+  "build_cost_actions": 1,
+  "requires_adjacent_colony": true,
+  "requires_terrain": "neutral",
+  "sustain_cost": 1,
+  "building_limit": 3,
+  "effects": [
+    {
+      "id": "aquifer_network_buffer",
+      "type": "aquifer_network",
+      "specs": {
+        "source_radius": 1,
+        "release_radius": 2,
+        "collect_above": 1,
+        "release_below": 1
+      }
+    }
+  ],
+  "upgrade_ids": ["aquifer_flood"]
+}

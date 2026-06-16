@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UserPublic(BaseModel):
@@ -103,11 +103,15 @@ class GameStateResponse(BaseModel):
     target_maturity: int
     wind_dir: int
     wind_label: str
+    current_wind_dir: Optional[int] = None
+    current_wind_label: Optional[str] = None
     actions_left: int
     maturity: int
     strains: Dict[str, int]
     strain_maturity: int
     global_upgrades: Dict[str, bool]
+    aquifer: Dict[str, Any] = Field(default_factory=dict)
+    events: List[Dict[str, Any]] = Field(default_factory=list)
     base_economy: Dict[str, Any]
     live_economy: Dict[str, Any]
     resources: Dict[str, Any]

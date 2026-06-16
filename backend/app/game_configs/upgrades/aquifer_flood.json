@@ -1,0 +1,23 @@
+{
+  "id": "aquifer_flood",
+  "label": "Flood Aquifer",
+  "building_id": "aquifer",
+  "cost_life": 3,
+  "cost_actions": 1,
+  "requires": { "maturity_min": 0 },
+  "effect_replacements": [
+    {
+      "replace_id": "aquifer_network_buffer",
+      "effect": {
+        "id": "aquifer_flood_network_buffer",
+        "type": "aquifer_network",
+        "specs": {
+          "source_radius": 1,
+          "release_radius": 2,
+          "collect_above": 1,
+          "release_below": 3
+        }
+      }
+    }
+  ]
+}

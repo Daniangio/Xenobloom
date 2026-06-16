@@ -18,11 +18,20 @@ const NUTRIENTS = [
   { id: "blue", label: "Blue", color: "#4299e1" },
   { id: "purple", label: "Purple", color: "#9f7aea" },
 ];
+const WIND_DIRECTIONS = ["E", "SE", "SW", "W", "NW", "NE"];
+const DROUGHT_SEVERITIES = [
+  { value: 1, label: "I" },
+  { value: 2, label: "II" },
+  { value: 3, label: "III" },
+  { value: 4, label: "IV" },
+];
 
 const defaultPayload = () => ({
   version: 1,
   tiles: {},
   goals: { mode: "all", survive_phases: 25, target_maturity: 1000 },
+  wind: { mode: "random", schedule: [] },
+  events: [],
 });
 
 const tileKey = (q, r) => `${q},${r}`;
@@ -160,7 +169,9 @@ const CreatorEditorPage = () => {
     });
   };
 
-  const startPainting = (key) => {
+  const startPainting = (key, event) => {
+    if (event?.button !== 0) return;
+    if (event?.shiftKey) return;
     isPaintingRef.current = activeTab === "tiles" || activeTab === "buildings";
     lastPaintedKeyRef.current = "";
     editTileFromBoard(key);
@@ -188,7 +199,7 @@ const CreatorEditorPage = () => {
     setSaving(true);
     setError("");
     try {
-      const body = { name, description, payload };
+      const body = { name, description, payload: sanitizeCreatorPayload(payload) };
       if (publish !== null) body.publish = publish;
       const response = await fetch(buildApiUrl(isNew ? "/api/creations" : `/api/creations/${creationId}`), {
         method: isNew ? "POST" : "PUT",
@@ -205,6 +216,71 @@ const CreatorEditorPage = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const setWindMode = (mode) => {
+    setPayload((current) => ({
+      ...current,
+      wind: {
+        ...(current.wind || {}),
+        mode,
+        schedule: Array.isArray(current.wind?.schedule) ? current.wind.schedule : [],
+      },
+    }));
+  };
+
+  const updateWindSchedule = (index, patch) => {
+    setPayload((current) => {
+      const schedule = [...(current.wind?.schedule || [])];
+      schedule[index] = { ...schedule[index], ...patch };
+      return { ...current, wind: { ...(current.wind || {}), mode: "scheduled", schedule } };
+    });
+  };
+
+  const addWindSchedule = () => {
+    setPayload((current) => ({
+      ...current,
+      wind: {
+        ...(current.wind || {}),
+        mode: "scheduled",
+        schedule: [...(current.wind?.schedule || []), { season: (current.wind?.schedule || []).length + 1, direction: "E" }],
+      },
+    }));
+  };
+
+  const removeWindSchedule = (index) => {
+    setPayload((current) => ({
+      ...current,
+      wind: {
+        ...(current.wind || {}),
+        schedule: (current.wind?.schedule || []).filter((_item, itemIndex) => itemIndex !== index),
+      },
+    }));
+  };
+
+  const updateEvent = (index, patch) => {
+    setPayload((current) => {
+      const events = [...(current.events || [])];
+      events[index] = { ...events[index], ...patch };
+      return { ...current, events };
+    });
+  };
+
+  const addEvent = () => {
+    setPayload((current) => ({
+      ...current,
+      events: [
+        ...(current.events || []),
+        { id: `sudden_drought_${Date.now()}`, type: "sudden_drought", season: 5, severity: 2, revealed: true },
+      ],
+    }));
+  };
+
+  const removeEvent = (index) => {
+    setPayload((current) => ({
+      ...current,
+      events: (current.events || []).filter((_item, itemIndex) => itemIndex !== index),
+    }));
   };
 
   return (
@@ -302,6 +378,73 @@ const CreatorEditorPage = () => {
               ))}
             </div>
           </section>
+
+          <section className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-white">Wind</h2>
+              <select
+                className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs"
+                onChange={(event) => setWindMode(event.target.value)}
+                value={payload.wind?.mode || "random"}
+              >
+                <option value="random">Random</option>
+                <option value="scheduled">Scheduled</option>
+              </select>
+            </div>
+            {payload.wind?.mode === "scheduled" ? (
+              <div className="mt-3 grid gap-2">
+                {(payload.wind?.schedule || []).map((item, index) => (
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2" key={`${item.season}:${item.direction}:${index}`}>
+                    <input
+                      className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs"
+                      min="1"
+                      onChange={(event) => updateWindSchedule(index, { season: Number(event.target.value) })}
+                      type="number"
+                      value={item.season || 1}
+                    />
+                    <select
+                      className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs"
+                      onChange={(event) => updateWindSchedule(index, { direction: event.target.value })}
+                      value={item.direction || "E"}
+                    >
+                      {WIND_DIRECTIONS.map((direction) => <option key={direction} value={direction}>{direction}</option>)}
+                    </select>
+                    <button className="rounded-md border border-slate-700 px-2 text-xs text-slate-300 hover:bg-slate-800" onClick={() => removeWindSchedule(index)} type="button">Remove</button>
+                  </div>
+                ))}
+                <button className="rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800" onClick={addWindSchedule} type="button">Add Wind Season</button>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-white">Hazards</h2>
+              <button className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800" onClick={addEvent} type="button">Add</button>
+            </div>
+            <div className="mt-3 grid gap-2">
+              {(payload.events || []).map((event, index) => (
+                <div className="grid grid-cols-[64px_1fr_1fr] gap-2" key={event.id || index}>
+                  <input
+                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs"
+                    min="1"
+                    onChange={(inputEvent) => updateEvent(index, { season: Number(inputEvent.target.value) })}
+                    type="number"
+                    value={event.season || 1}
+                  />
+                  <select
+                    className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs"
+                    onChange={(inputEvent) => updateEvent(index, { severity: Number(inputEvent.target.value) })}
+                    value={event.severity || 1}
+                  >
+                    {DROUGHT_SEVERITIES.map((severity) => <option key={severity.value} value={severity.value}>Drought {severity.label}</option>)}
+                  </select>
+                  <button className="rounded-md border border-slate-700 px-2 text-xs text-slate-300 hover:bg-slate-800" onClick={() => removeEvent(index)} type="button">Remove</button>
+                </div>
+              ))}
+              {(payload.events || []).length === 0 ? <p className="text-xs text-slate-500">No scheduled hazards.</p> : null}
+            </div>
+          </section>
           </>
           ) : null}
 
@@ -342,7 +485,9 @@ const CreatorEditorPage = () => {
         <section className="relative overflow-hidden rounded-lg border border-slate-800 bg-white">
           <HexBoardViewport
             bounds={boardBounds}
+            enablePan
             onContextMenu={(event) => event.preventDefault()}
+            panModifierKey={activeTab === "overview" ? null : "shiftKey"}
             onPointerCancel={stopPainting}
             onPointerLeave={stopPainting}
             onPointerUp={stopPainting}
@@ -353,7 +498,7 @@ const CreatorEditorPage = () => {
                 config={config}
                 data={payload.tiles[tile.key]}
                 key={tile.key}
-                onPointerDown={() => startPainting(tile.key)}
+                onPointerDown={(event) => startPainting(tile.key, event)}
                 onPointerEnter={() => continuePainting(tile.key)}
                 selected={selectedKey === tile.key}
                 tile={tile}
@@ -425,6 +570,52 @@ const BuildingPreview = ({ building, config }) => {
       <BuildingGlyph building={building} config={config} tile={tile} x={0} y={0} size={22} />
     </svg>
   );
+};
+
+const sanitizeCreatorPayload = (payload) => {
+  const tiles = {};
+  Object.entries(payload?.tiles || {}).forEach(([key, value]) => {
+    const tile = { ...(value || {}) };
+    const terrainValue = String(tile.terrain || "");
+    const isRealTile =
+      (Object.prototype.hasOwnProperty.call(tile, "terrain") && terrainValue !== "" && terrainValue !== "__empty") ||
+      Number(tile.hydration || 0) !== 0 ||
+      Boolean(tile.nutrient_type) ||
+      Boolean(tile.building) ||
+      Boolean(tile.building_upgrade);
+    if (isRealTile) tiles[key] = tile;
+  });
+  const windSchedule = (payload?.wind?.schedule || [])
+    .map((item) => ({
+      season: Math.max(1, Number(item.season || 1)),
+      direction: WIND_DIRECTIONS.includes(String(item.direction || "").toUpperCase())
+        ? String(item.direction).toUpperCase()
+        : "E",
+    }))
+    .sort((a, b) => a.season - b.season);
+  const events = (payload?.events || [])
+    .map((event, index) => ({
+      id: event.id || `sudden_drought_${index}`,
+      type: "sudden_drought",
+      season: Math.max(1, Number(event.season || 1)),
+      severity: Math.max(1, Math.min(4, Number(event.severity || 1))),
+      revealed: true,
+    }))
+    .sort((a, b) => a.season - b.season);
+  return {
+    version: 1,
+    tiles,
+    goals: {
+      mode: payload?.goals?.mode || "all",
+      survive_phases: Number(payload?.goals?.survive_phases || 25),
+      target_maturity: Number(payload?.goals?.target_maturity || 1000),
+    },
+    wind: {
+      mode: payload?.wind?.mode === "scheduled" ? "scheduled" : "random",
+      schedule: windSchedule,
+    },
+    events,
+  };
 };
 
 export default CreatorEditorPage;

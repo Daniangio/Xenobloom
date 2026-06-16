@@ -1,5 +1,5 @@
 import { Minus, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -16,18 +16,48 @@ const HexBoardViewport = ({
   onPointerCancel = null,
   onPointerLeave = null,
   onPointerUp = null,
+  enablePan = true,
+  panButton = 0,
+  panModifierKey = null,
   controlsClassName = "left-3 top-3",
 }) => {
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef(null);
+  const draggedRef = useRef(false);
+  const svgRef = useRef(null);
   const normalizedBounds = bounds || { x: -250, y: -200, width: 500, height: 400 };
+  const safeZoom = clamp(zoom, minZoom, maxZoom);
+  const viewport = useMemo(
+    () => ({
+      width: normalizedBounds.width / safeZoom,
+      height: normalizedBounds.height / safeZoom,
+    }),
+    [normalizedBounds.height, normalizedBounds.width, safeZoom]
+  );
+
+  const panLimits = useMemo(
+    () => ({
+      x: Math.max(0, (normalizedBounds.width - viewport.width) / 2),
+      y: Math.max(0, (normalizedBounds.height - viewport.height) / 2),
+    }),
+    [normalizedBounds.height, normalizedBounds.width, viewport.height, viewport.width]
+  );
+
+  const clampPan = (nextPan) => ({
+    x: clamp(nextPan.x, -panLimits.x, panLimits.x),
+    y: clamp(nextPan.y, -panLimits.y, panLimits.y),
+  });
+
+  useEffect(() => {
+    setPan((current) => clampPan(current));
+  }, [panLimits.x, panLimits.y]);
+
   const viewBox = useMemo(() => {
-    const safeZoom = clamp(zoom, minZoom, maxZoom);
-    const width = normalizedBounds.width / safeZoom;
-    const height = normalizedBounds.height / safeZoom;
     const centerX = normalizedBounds.x + normalizedBounds.width / 2;
     const centerY = normalizedBounds.y + normalizedBounds.height / 2;
-    return `${centerX - width / 2} ${centerY - height / 2} ${width} ${height}`;
-  }, [maxZoom, minZoom, normalizedBounds, zoom]);
+    return `${centerX + pan.x - viewport.width / 2} ${centerY + pan.y - viewport.height / 2} ${viewport.width} ${viewport.height}`;
+  }, [normalizedBounds, pan.x, pan.y, viewport.height, viewport.width]);
 
   const stepZoom = (direction) => {
     setZoom((current) => {
@@ -39,6 +69,64 @@ const HexBoardViewport = ({
       );
       return levels[clamp(index + direction, 0, levels.length - 1)] || current;
     });
+  };
+
+  const eventPoint = (event) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      x: event.clientX,
+      y: event.clientY,
+      rectWidth: rect.width || 1,
+      rectHeight: rect.height || 1,
+    };
+  };
+
+  const handlePointerDown = (event) => {
+    if (!enablePan || event.button !== panButton || panLimits.x + panLimits.y <= 0) return;
+    if (panModifierKey && !event[panModifierKey]) return;
+    const point = eventPoint(event);
+    if (!point) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: point.x,
+      startClientY: point.y,
+      startPan: pan,
+      rectWidth: point.rectWidth,
+      rectHeight: point.rectHeight,
+    };
+    draggedRef.current = false;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handlePointerMove = (event) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - drag.startClientX;
+    const deltaY = event.clientY - drag.startClientY;
+    if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) draggedRef.current = true;
+    setPan(
+      clampPan({
+        x: drag.startPan.x - (deltaX / drag.rectWidth) * viewport.width,
+        y: drag.startPan.y - (deltaY / drag.rectHeight) * viewport.height,
+      })
+    );
+  };
+
+  const finishPointer = (event) => {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+      dragRef.current = null;
+    }
+  };
+
+  const handleClickCapture = (event) => {
+    if (!draggedRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    window.setTimeout(() => {
+      draggedRef.current = false;
+    }, 0);
   };
 
   return (
@@ -67,11 +155,24 @@ const HexBoardViewport = ({
         </button>
       </div>
       <svg
-        className={`h-full w-full ${svgClassName}`}
+        ref={svgRef}
+        className={`h-full w-full touch-none ${enablePan ? "cursor-grab active:cursor-grabbing" : ""} ${svgClassName}`}
+        onClickCapture={handleClickCapture}
         onContextMenu={onContextMenu}
-        onPointerCancel={onPointerCancel}
-        onPointerLeave={onPointerLeave}
-        onPointerUp={onPointerUp}
+        onPointerCancel={(event) => {
+          finishPointer(event);
+          onPointerCancel?.(event);
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerLeave={(event) => {
+          finishPointer(event);
+          onPointerLeave?.(event);
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerUp={(event) => {
+          finishPointer(event);
+          onPointerUp?.(event);
+        }}
         preserveAspectRatio="xMidYMid meet"
         viewBox={viewBox}
       >

@@ -16,7 +16,9 @@ DIRECTIONS = [
     {"q": 0, "r": -1, "name": "NW"},
     {"q": 1, "r": -1, "name": "NE"},
 ]
+DIRECTION_INDEX_BY_NAME = {direction["name"]: index for index, direction in enumerate(DIRECTIONS)}
 NUTRIENT_TYPES = ("green", "blue", "purple")
+SUDDEN_DROUGHT_TARGETS_BY_SEVERITY = {1: 2, 2: 3, 3: 4, 4: 5}
 
 
 def hex_key(q: int, r: int) -> str:
@@ -50,6 +52,8 @@ class GameEngine:
         creation_payload = creation or {}
         creation_tiles = creation_payload.get("tiles") or {}
         creation_goals = creation_payload.get("goals") or {}
+        creation_wind = self._normalize_wind_config(creation_payload.get("wind") or {})
+        creation_events = self._normalize_event_config(creation_payload.get("events") or [])
         creation_radius = 0
         for key in creation_tiles:
             try:
@@ -120,8 +124,15 @@ class GameEngine:
             )
 
         if creation:
-            for tile in grid.values():
-                tile.update({
+            grid = {}
+            for key, override in creation_tiles.items():
+                try:
+                    q, r = [int(part) for part in str(key).split(",", 1)]
+                except ValueError:
+                    continue
+                tile = {
+                    "q": q,
+                    "r": r,
                     "terrain": "neutral",
                     "hydration": 0,
                     "building": None,
@@ -130,34 +141,31 @@ class GameEngine:
                     "terrain_stress": 0,
                     "nutrient_type": None,
                     "extraction_progress": 0,
-                })
-            for key, override in creation_tiles.items():
-                try:
-                    q, r = [int(part) for part in str(key).split(",", 1)]
-                except ValueError:
-                    continue
-                tile = grid.setdefault(
-                    hex_key(q, r),
-                    {
-                        "q": q,
-                        "r": r,
-                        "terrain": "neutral",
-                        "hydration": 0,
-                        "building": None,
-                        "building_upgrade": None,
-                        "stress": 0,
-                        "terrain_stress": 0,
-                        "nutrient_type": None,
-                        "extraction_progress": 0,
-                    },
-                )
+                }
                 for field in ("terrain", "hydration", "nutrient_type", "building", "building_upgrade"):
                     if field in override:
                         tile[field] = override[field]
                 tile["hydration"] = self._clamp_hydration(int(tile.get("hydration") or 0), tile.get("terrain"))
+                grid[hex_key(q, r)] = tile
             if not any(tile.get("building") == "core" for tile in grid.values()):
-                grid[core_key]["building"] = "core"
+                grid[core_key] = {
+                    "q": int(self.rules["core_start_q"]),
+                    "r": int(self.rules["core_start_r"]),
+                    "terrain": "neutral",
+                    "hydration": 0,
+                    "building": "core",
+                    "building_upgrade": None,
+                    "stress": 0,
+                    "terrain_stress": 0,
+                    "nutrient_type": None,
+                    "extraction_progress": 0,
+                }
 
+        initial_wind_dir = self._wind_for_season(
+            {"wind_mode": creation_wind["mode"], "wind_schedule": creation_wind["schedule"]},
+            1,
+            rng,
+        )
         initial_state = {
             "schema_version": 1,
             "config_id": self.rules["id"],
@@ -166,7 +174,10 @@ class GameEngine:
             "phase": "IN_GAME",
             "game_over": None,
             "season": 1,
-            "wind_dir": rng.randrange(0, len(DIRECTIONS)),
+            "wind_mode": creation_wind["mode"],
+            "wind_schedule": creation_wind["schedule"],
+            "wind_dir": initial_wind_dir,
+            "next_wind_dir": initial_wind_dir,
             "actions_left": int(self.rules["actions_per_season"]),
             "maturity": 0,
             "goals": {
@@ -176,6 +187,9 @@ class GameEngine:
             },
             "base_economy": {"prod": 0, "sustain": 0},
             "spent_life": 0,
+            "aquifer_pool": 0,
+            "aquifer_pool_max": int(self.rules.get("aquifer_pool_max") or 5),
+            "events": creation_events,
             "strains": {nutrient_type: 0 for nutrient_type in NUTRIENT_TYPES},
             "global_upgrades": {
                 "composting": False,
@@ -201,6 +215,9 @@ class GameEngine:
         connected_keys = self._connected_building_keys(state)
         strains = self._strain_counts(state)
         goals = self._goals(state)
+        next_wind_dir = int(state.get("next_wind_dir", state.get("wind_dir", 0)) or 0)
+        current_wind_dir = int(state.get("wind_dir") or 0)
+        aquifer_pool_max = self._aquifer_pool_max(state)
         return {
             "revision": int(state.get("revision") or 0),
             "phase": state.get("phase", "IN_GAME"),
@@ -208,13 +225,20 @@ class GameEngine:
             "season": int(state.get("season") or 1),
             "max_seasons": int(goals["survive_phases"]),
             "target_maturity": int(goals["target_maturity"]),
-            "wind_dir": int(state.get("wind_dir") or 0),
-            "wind_label": DIRECTIONS[int(state.get("wind_dir") or 0)]["name"],
+            "wind_dir": next_wind_dir,
+            "wind_label": DIRECTIONS[next_wind_dir]["name"],
+            "current_wind_dir": current_wind_dir,
+            "current_wind_label": DIRECTIONS[current_wind_dir]["name"],
             "actions_left": int(state.get("actions_left") or 0),
             "maturity": int(state.get("maturity") or 0),
             "strains": strains,
             "strain_maturity": self._strain_maturity(strains),
             "global_upgrades": self._global_upgrades(state),
+            "aquifer": {
+                "pool": min(int(state.get("aquifer_pool") or 0), aquifer_pool_max),
+                "max": aquifer_pool_max,
+            },
+            "events": self._public_events(state),
             "base_economy": base_economy,
             "live_economy": live_economy,
             "resources": self._resource_summary(state, live_economy=live_economy),
@@ -312,6 +336,7 @@ class GameEngine:
                     actions_left >= cost_actions
                     and available_life >= cost_life
                     and self._can_build_on(state, hex_state, building)
+                    and self._within_building_limit(state, building_id, building)
                 )
                 if legal:
                     actions.append(
@@ -433,6 +458,8 @@ class GameEngine:
         global_upgrades = self._global_upgrades(state)
         global_upgrades[upgrade_id] = True
         state["global_upgrades"] = global_upgrades
+        state["aquifer_pool_max"] = self._aquifer_pool_max(state)
+        state["aquifer_pool"] = min(int(state.get("aquifer_pool") or 0), int(state["aquifer_pool_max"]))
         state["actions_left"] = int(state["actions_left"]) - int(upgrade.get("cost_actions") or 1)
         state["spent_life"] = int(state.get("spent_life") or 0) + int(upgrade.get("cost_life") or 0)
         self._add_log(state, f"Unlocked {upgrade['label']}.")
@@ -464,9 +491,8 @@ class GameEngine:
         rng = self._rng_for(state, "end_season")
         turn_logs: list[str] = []
         season = int(state["season"])
-        if season > 1 and season % 2 != 0:
-            state["wind_dir"] = rng.randrange(0, len(DIRECTIONS))
-            turn_logs.append(f"Wind shifted to {DIRECTIONS[state['wind_dir']]['name']}.")
+        state["wind_dir"] = int(state.get("next_wind_dir", state.get("wind_dir", 0)) or 0)
+        turn_logs.append(f"Wind blew {DIRECTIONS[state['wind_dir']]['name']}.")
 
         connected_keys = self._connected_building_keys(state)
         global_upgrades = self._global_upgrades(state)
@@ -474,6 +500,8 @@ class GameEngine:
         if season % 2 == 0:
             self._resolve_drought(state, rng)
             turn_logs.append("Drought replicated.")
+        self._resolve_scheduled_events(state, rng, turn_logs)
+        self._resolve_aquifers(state, rng, connected_keys, global_upgrades, turn_logs)
 
         projected_economy = self.calculate_economy(state["grid"], state=state)
         if projected_economy["sustain"] > projected_economy["prod"]:
@@ -492,8 +520,11 @@ class GameEngine:
         self._resolve_assimilators(state, rng, connected_keys, global_upgrades, turn_logs)
         core_died = self._resolve_stress_and_maturity(state, connected_keys, global_upgrades, turn_logs)
         state["season"] = season + 1
+        state["next_wind_dir"] = self._wind_for_season(state, int(state["season"]), self._rng_for(state, "next_wind"))
         state["actions_left"] = int(self.rules["actions_per_season"])
         state["spent_life"] = 0
+        state["aquifer_pool_max"] = self._aquifer_pool_max(state)
+        state["aquifer_pool"] = min(int(state.get("aquifer_pool") or 0), int(state["aquifer_pool_max"]))
         state["base_economy"] = self.calculate_economy(state["grid"], state=state)
         for message in reversed(turn_logs):
             self._add_log(state, message)
@@ -594,6 +625,138 @@ class GameEngine:
             else:
                 tile["hydration"] = self._clamp_hydration(int(tile["hydration"]) - 1, tile.get("terrain"))
 
+    def _resolve_scheduled_events(self, state: dict[str, Any], rng: random.Random, turn_logs: list[str]) -> None:
+        season = int(state.get("season") or 1)
+        for event in state.get("events") or []:
+            if event.get("resolved"):
+                continue
+            if str(event.get("type") or "") != "sudden_drought":
+                continue
+            if int(event.get("season") or event.get("trigger_season") or 0) != season:
+                continue
+            severity = max(1, min(4, int(event.get("severity") or 1)))
+            hit_count = SUDDEN_DROUGHT_TARGETS_BY_SEVERITY[severity]
+            targets = [
+                tile for tile in state["grid"].values()
+                if tile.get("building") != "core"
+                and self._distance_to_nearest_core(state, tile) >= 2
+            ]
+            rng.shuffle(targets)
+            for tile in targets[:hit_count]:
+                tile["hydration"] = self._clamp_hydration(int(self.rules["hydration_min"]), tile.get("terrain"))
+            event["resolved"] = True
+            turn_logs.append(f"Sudden Drought {self._roman(severity)} struck {min(hit_count, len(targets))} tiles.")
+
+    def _resolve_aquifers(
+        self,
+        state: dict[str, Any],
+        rng: random.Random,
+        connected_keys: set[str],
+        global_upgrades: dict[str, bool],
+        turn_logs: list[str],
+    ) -> None:
+        nodes = self._active_aquifer_nodes(state, connected_keys, global_upgrades)
+        if not nodes:
+            return
+        collected = self._collect_aquifer_pool(state, nodes)
+        released = self._release_aquifer_pool(state, nodes, rng)
+        if collected or released:
+            turn_logs.append(f"Aquifer Network collected {collected} Hydration and restored {released} dry tile{'s' if released != 1 else ''}.")
+
+    def _active_aquifer_nodes(
+        self,
+        state: dict[str, Any],
+        connected_keys: set[str],
+        global_upgrades: dict[str, bool],
+    ) -> list[dict[str, Any]]:
+        nodes: list[dict[str, Any]] = []
+        for key, tile in state["grid"].items():
+            if tile.get("building") != "aquifer":
+                continue
+            if not self._is_building_active(tile, key, connected_keys, global_upgrades):
+                continue
+            effect = next((item for item in self._active_effects(tile) if item.get("type") == "aquifer_network"), None)
+            if not effect:
+                continue
+            specs = effect.get("specs") or {}
+            nodes.append({
+                "key": key,
+                "tile": tile,
+                "source_radius": int(specs.get("source_radius") or 1),
+                "release_radius": int(specs.get("release_radius") or 2),
+                "collect_above": int(specs.get("collect_above") or 1),
+                "release_below": int(specs.get("release_below") or 1),
+                "distance_to_core": self._distance_to_nearest_core(state, tile),
+            })
+        return nodes
+
+    def _collect_aquifer_pool(self, state: dict[str, Any], nodes: list[dict[str, Any]]) -> int:
+        pool_max = self._aquifer_pool_max(state)
+        pool = min(int(state.get("aquifer_pool") or 0), pool_max)
+        collected = 0
+        source_keys: set[str] = set()
+        for node in nodes:
+            node_tile = node["tile"]
+            for key, tile in state["grid"].items():
+                if key in source_keys:
+                    continue
+                if hex_distance(node_tile["q"], node_tile["r"], tile["q"], tile["r"]) <= int(node["source_radius"]):
+                    source_keys.add(key)
+        for key in source_keys:
+            if pool >= pool_max:
+                break
+            tile = state["grid"][key]
+            collect_above = min(
+                int(node["collect_above"])
+                for node in nodes
+                if hex_distance(node["tile"]["q"], node["tile"]["r"], tile["q"], tile["r"]) <= int(node["source_radius"])
+            )
+            hydration = int(tile.get("hydration") or 0)
+            excess = max(0, hydration - collect_above)
+            accepted = min(excess, pool_max - pool)
+            if accepted <= 0:
+                continue
+            tile["hydration"] = hydration - accepted
+            pool += accepted
+            collected += accepted
+        state["aquifer_pool"] = pool
+        state["aquifer_pool_max"] = pool_max
+        return collected
+
+    def _release_aquifer_pool(self, state: dict[str, Any], nodes: list[dict[str, Any]], rng: random.Random) -> int:
+        released = 0
+        while int(state.get("aquifer_pool") or 0) > 0:
+            candidates = self._aquifer_release_candidates(state, nodes)
+            if not candidates:
+                break
+            best_hydration = min(int(candidate["target"].get("hydration") or 0) for candidate in candidates)
+            candidates = [candidate for candidate in candidates if int(candidate["target"].get("hydration") or 0) == best_hydration]
+            best_distance = min(int(candidate["node"]["distance_to_core"]) for candidate in candidates)
+            candidates = [candidate for candidate in candidates if int(candidate["node"]["distance_to_core"]) == best_distance]
+            target = self._resolve_wind_tie(candidates, int(state.get("wind_dir") or 0), rng)["target"]
+            target["hydration"] = self._clamp_hydration(int(target.get("hydration") or 0) + 1, target.get("terrain"))
+            state["aquifer_pool"] = int(state.get("aquifer_pool") or 0) - 1
+            released += 1
+        return released
+
+    def _aquifer_release_candidates(self, state: dict[str, Any], nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for key, target in state["grid"].items():
+            serving_nodes = [
+                node for node in nodes
+                if hex_distance(node["tile"]["q"], node["tile"]["r"], target["q"], target["r"]) <= int(node["release_radius"])
+                and int(target.get("hydration") or 0) < int(node["release_below"])
+            ]
+            if not serving_nodes:
+                continue
+            node = min(serving_nodes, key=lambda item: int(item["distance_to_core"]))
+            candidates.append({
+                "target": target,
+                "node": node,
+                "dir_index": self._direction_index_between(node["tile"], target),
+            })
+        return candidates
+
     def _resolve_assimilators(
         self,
         state: dict[str, Any],
@@ -618,12 +781,16 @@ class GameEngine:
             if rate <= 0:
                 continue
             progress = int(tile.get("extraction_progress") or 0) + rate
-            threshold = int(projection["threshold"])
-            created = progress // threshold
-            tile["extraction_progress"] = progress % threshold
+            strains = self._strain_counts(state)
+            collected = int(strains.get(nutrient_type) or 0)
+            created = 0
+            while progress >= self._strain_threshold_for_count(projection, collected):
+                progress -= self._strain_threshold_for_count(projection, collected)
+                collected += 1
+                created += 1
+            tile["extraction_progress"] = progress
             if created:
-                strains = self._strain_counts(state)
-                strains[nutrient_type] = int(strains.get(nutrient_type) or 0) + created
+                strains[nutrient_type] = collected
                 state["strains"] = strains
                 produced.extend([nutrient_type] * created)
         if produced:
@@ -654,10 +821,32 @@ class GameEngine:
             "openness_rate": openness_rate,
             "dry_penalty": dry_penalty,
             "rate": max(0, openness_rate - dry_penalty),
-            "threshold": int(specs.get("threshold") or self.rules["strain_threshold"]),
+            "threshold": self._strain_threshold_for_count(
+                specs,
+                int(self._strain_counts(state).get(str(tile.get("nutrient_type") or ""), 0)),
+            ),
+            "thresholds": self._strain_threshold_sequence(specs),
             "stress_hydration_max": int(specs.get("stress_hydration_max") or -2),
             "stress_value": int(specs.get("stress_value") or 1),
         }
+
+    def _strain_threshold_sequence(self, specs: dict[str, Any]) -> list[int]:
+        raw_thresholds = specs.get("thresholds")
+        if isinstance(raw_thresholds, list) and raw_thresholds:
+            thresholds = []
+            for value in raw_thresholds:
+                try:
+                    thresholds.append(max(1, int(value)))
+                except (TypeError, ValueError):
+                    continue
+            if thresholds:
+                return thresholds
+        return [max(1, int(specs.get("threshold") or self.rules["strain_threshold"]))]
+
+    def _strain_threshold_for_count(self, specs: dict[str, Any], collected_count: int) -> int:
+        thresholds = self._strain_threshold_sequence(specs)
+        index = max(0, min(int(collected_count or 0), len(thresholds) - 1))
+        return int(thresholds[index])
 
     def _resolve_stress_and_maturity(
         self,
@@ -840,6 +1029,13 @@ class GameEngine:
         upgrade = self.config.upgrades.get(str(tile.get("building_upgrade") or ""), {})
         return max(0, int(building.get("sustain_cost") or 0) + int(upgrade.get("sustain_delta") or 0))
 
+    def _within_building_limit(self, state: dict[str, Any], building_id: str, building: dict[str, Any]) -> bool:
+        limit = building.get("building_limit")
+        if limit is None:
+            return True
+        count = sum(1 for tile in state.get("grid", {}).values() if tile.get("building") == building_id)
+        return count < int(limit)
+
     def _conditions_match(self, tile: dict[str, Any], conditions: dict[str, Any]) -> bool:
         for condition_id, allowed_values in conditions.items():
             if not isinstance(allowed_values, list):
@@ -862,9 +1058,8 @@ class GameEngine:
 
     def _connected_building_keys(self, state: dict[str, Any]) -> set[str]:
         grid = state.get("grid") or {}
-        core_key = hex_key(int(self.rules["core_start_q"]), int(self.rules["core_start_r"]))
         connected: set[str] = set()
-        queue = [core_key]
+        queue = self._core_keys(state)
         while queue:
             key = queue.pop(0)
             if key in connected:
@@ -878,6 +1073,33 @@ class GameEngine:
                 if neighbor_key not in connected and grid.get(neighbor_key, {}).get("building"):
                     queue.append(neighbor_key)
         return connected
+
+    def _core_keys(self, state: dict[str, Any]) -> list[str]:
+        grid = state.get("grid") or {}
+        keys = [key for key, tile in grid.items() if tile.get("building") == "core"]
+        if keys:
+            return keys
+        return [hex_key(int(self.rules["core_start_q"]), int(self.rules["core_start_r"]))]
+
+    def _distance_to_nearest_core(self, state: dict[str, Any], tile: dict[str, Any]) -> int:
+        grid = state.get("grid") or {}
+        core_tiles = [grid[key] for key in self._core_keys(state) if key in grid]
+        if not core_tiles:
+            return hex_distance(
+                int(self.rules["core_start_q"]),
+                int(self.rules["core_start_r"]),
+                int(tile.get("q") or 0),
+                int(tile.get("r") or 0),
+            )
+        return min(
+            hex_distance(
+                int(core.get("q") or 0),
+                int(core.get("r") or 0),
+                int(tile.get("q") or 0),
+                int(tile.get("r") or 0),
+            )
+            for core in core_tiles
+        )
 
     def _is_building_active(
         self,
@@ -907,9 +1129,22 @@ class GameEngine:
             "autonomous_connectors": False,
             "autonomous_condensers": False,
             "autonomous_blooms": False,
+            "expanded_aquifer_network": False,
         }
         values.update({str(key): bool(value) for key, value in (state.get("global_upgrades") or {}).items()})
         return values
+
+    def _aquifer_pool_max(self, state: dict[str, Any]) -> int:
+        base = int(self.rules.get("aquifer_pool_max") or state.get("aquifer_pool_max") or 5)
+        total = base
+        active_globals = self._global_upgrades(state)
+        for upgrade_id, active in active_globals.items():
+            if not active:
+                continue
+            upgrade = self.config.global_upgrades.get(upgrade_id) or {}
+            if upgrade.get("effect") == "aquifer_pool_max_delta":
+                total += int(upgrade.get("pool_max_delta") or 0)
+        return total
 
     def _strain_counts(self, state: dict[str, Any]) -> dict[str, int]:
         source = state.get("strains") or {}
@@ -928,6 +1163,70 @@ class GameEngine:
             "target_maturity": int(source.get("target_maturity") or self.rules["target_maturity"]),
         }
 
+    def _public_events(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        season = int(state.get("season") or 1)
+        public_events = []
+        for event in state.get("events") or []:
+            if event.get("resolved"):
+                continue
+            trigger_season = int(event.get("season") or event.get("trigger_season") or season)
+            seasons_until = max(0, trigger_season - season)
+            if event.get("revealed", True) and seasons_until <= 3:
+                public_events.append({
+                    "id": str(event.get("id") or f"{event.get('type')}_{trigger_season}"),
+                    "type": str(event.get("type") or "sudden_drought"),
+                    "severity": int(event.get("severity") or 1),
+                    "season": trigger_season,
+                    "seasons_until": seasons_until,
+                    "revealed": True,
+                })
+        return sorted(public_events, key=lambda item: (item["seasons_until"], item["severity"]))
+
+    @staticmethod
+    def _normalize_wind_config(wind: dict[str, Any]) -> dict[str, Any]:
+        schedule = []
+        for item in wind.get("schedule") or []:
+            if not isinstance(item, dict):
+                continue
+            direction = str(item.get("direction") or item.get("wind") or "").upper()
+            if direction not in DIRECTION_INDEX_BY_NAME:
+                continue
+            schedule.append({"season": max(1, int(item.get("season") or 1)), "direction": direction})
+        schedule.sort(key=lambda item: item["season"])
+        return {
+            "mode": "scheduled" if str(wind.get("mode") or "random") == "scheduled" else "random",
+            "schedule": schedule,
+        }
+
+    @staticmethod
+    def _normalize_event_config(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized = []
+        for item in events or []:
+            if not isinstance(item, dict):
+                continue
+            event_type = str(item.get("type") or "sudden_drought")
+            if event_type != "sudden_drought":
+                continue
+            season = max(1, int(item.get("season") or item.get("trigger_season") or 1))
+            severity = max(1, min(4, int(item.get("severity") or 1)))
+            normalized.append({
+                "id": str(item.get("id") or f"sudden_drought_{season}_{severity}"),
+                "type": "sudden_drought",
+                "season": season,
+                "severity": severity,
+                "revealed": bool(item.get("revealed", True)),
+                "resolved": bool(item.get("resolved", False)),
+            })
+        normalized.sort(key=lambda item: (item["season"], item["severity"]))
+        return normalized
+
+    def _wind_for_season(self, state: dict[str, Any], season: int, rng: random.Random) -> int:
+        if str(state.get("wind_mode") or "random") == "scheduled":
+            for item in state.get("wind_schedule") or []:
+                if int(item.get("season") or 0) == int(season):
+                    return DIRECTION_INDEX_BY_NAME.get(str(item.get("direction") or "").upper(), rng.randrange(0, len(DIRECTIONS)))
+        return rng.randrange(0, len(DIRECTIONS))
+
     def _is_forest_aura(self, state: dict[str, Any], tile: dict[str, Any]) -> bool:
         if tile.get("terrain") == "forest":
             return True
@@ -940,6 +1239,19 @@ class GameEngine:
         best_angular = min(_angular_distance(int(candidate["dir_index"]), wind_dir) for candidate in candidates)
         tied = [candidate for candidate in candidates if _angular_distance(int(candidate["dir_index"]), wind_dir) == best_angular]
         return rng.choice(tied)
+
+    def _direction_index_between(self, source: dict[str, Any], target: dict[str, Any]) -> int:
+        if int(source.get("q") or 0) == int(target.get("q") or 0) and int(source.get("r") or 0) == int(target.get("r") or 0):
+            return 0
+        return min(
+            range(len(DIRECTIONS)),
+            key=lambda index: hex_distance(
+                int(source.get("q") or 0) + DIRECTIONS[index]["q"],
+                int(source.get("r") or 0) + DIRECTIONS[index]["r"],
+                int(target.get("q") or 0),
+                int(target.get("r") or 0),
+            ),
+        )
 
     def _clamp_hydration(self, hydration: int, terrain: Any) -> int:
         terrain_config = self.config.terrains.get(str(terrain or "neutral"), {})
@@ -963,3 +1275,7 @@ class GameEngine:
     @staticmethod
     def _add_log(state: dict[str, Any], message: str) -> None:
         state["logs"] = [message, *list(state.get("logs") or [])][:8]
+
+    @staticmethod
+    def _roman(value: int) -> str:
+        return {1: "I", 2: "II", 3: "III", 4: "IV"}.get(int(value), str(value))

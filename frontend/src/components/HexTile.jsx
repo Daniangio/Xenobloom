@@ -34,14 +34,14 @@ export const HydrationSquares = ({
         : current <= value && current >= 0;
     const square = (
       <span
-        className={`${sizeClass} rounded-sm border border-slate-700 ${active ? "" : "bg-slate-900"}`}
+        className={`inline-flex shrink-0 rounded-sm border border-slate-700 ${sizeClass} ${active ? "" : "bg-slate-900"}`}
         style={active ? { backgroundColor: hydrationColor(current) } : undefined}
       />
     );
     nodes.push(
       interactive ? (
         <button
-          className="rounded-sm p-1 hover:bg-slate-800"
+          className="inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-slate-800"
           key={current}
           onClick={() => onChange?.(current)}
           title={`Hydration ${current > 0 ? `+${current}` : current}`}

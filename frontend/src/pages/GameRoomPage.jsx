@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Activity,
+  AlertTriangle,
   ArrowUp,
   Check,
   Droplets,
@@ -213,7 +214,7 @@ const GameRoomPage = () => {
         <section className="relative min-h-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-100">
           <WindField windLabel={gameState?.wind_label} />
           <TopBoardPanel busy={busy} endGame={endGame} gameState={gameState} submitCommand={submitCommand} />
-          <WindIndicator windLabel={gameState?.wind_label} />
+          <BoardAlertCluster events={gameState?.events || []} windLabel={gameState?.wind_label} />
           <HexBoardViewport bounds={boardBounds} className="relative z-[1]" controlsClassName="right-4 top-16">
             {sortedTiles.map((tile) => (
               <HexTile
@@ -251,6 +252,7 @@ const TopBoardPanel = ({ gameState, busy, submitCommand, endGame }) => {
     <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center justify-start gap-2 rounded-lg border border-slate-800 bg-slate-950/95 p-2 shadow-xl">
       <CompactStat icon={<Activity size={14} />} label="Season" value={`${gameState?.season || "-"} / ${gameState?.max_seasons || "-"}`} />
       <CompactStat icon={<Leaf size={14} />} label="Maturity" value={`${gameState?.maturity || 0} / ${gameState?.target_maturity || "-"}`} />
+      <CompactStat icon={<Droplets size={14} />} label="Aquifer" value={`${gameState?.aquifer?.pool ?? 0} / ${gameState?.aquifer?.max ?? 5}`} />
       <StrainPanel gameState={gameState} />
       <button
         className="rounded-md bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-white disabled:opacity-50"
@@ -304,6 +306,33 @@ const StrainPanel = ({ gameState }) => {
   );
 };
 
+const BoardAlertCluster = ({ events, windLabel }) => (
+  <div className="absolute bottom-2 right-2 z-30 flex items-stretch gap-2">
+    <HazardIndicator events={events} />
+    <WindIndicator windLabel={windLabel} />
+  </div>
+);
+
+const HazardIndicator = ({ events }) => {
+  const event = Array.isArray(events) ? events[0] : null;
+  if (!event) return null;
+  const severity = { 1: "I", 2: "II", 3: "III", 4: "IV" }[Number(event.severity || 1)] || event.severity;
+  const countdown = Number(event.seasons_until || 0);
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-amber-400/50 bg-slate-950/95 px-3 py-2 shadow-xl">
+      <span className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-400/15 text-amber-300">
+        <AlertTriangle size={18} />
+      </span>
+      <span>
+        <span className="block text-[10px] uppercase tracking-[0.12em] text-amber-300">Hazard</span>
+        <span className="block text-xs font-semibold text-white">
+          Drought {severity} {countdown === 0 ? "now" : `in ${countdown}`}
+        </span>
+      </span>
+    </div>
+  );
+};
+
 const WindField = ({ windLabel }) => {
   const angle = (WIND_ROTATION[windLabel] ?? 90) - 90;
   const particles = [
@@ -339,11 +368,14 @@ const WindField = ({ windLabel }) => {
 const WindIndicator = ({ windLabel }) => {
   const angle = WIND_ROTATION[windLabel] ?? 90;
   return (
-    <div className="absolute right-2 bottom-2 z-10 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/95 px-3 py-2 shadow-xl">
+    <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/95 px-3 py-2 shadow-xl">
       <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-sky-200">
         <ArrowUp size={18} style={{ transform: `rotate(${angle}deg)` }} />
       </span>
-      <span className="font-mono text-sm font-semibold text-white">{windLabel || "-"}</span>
+      <span>
+        <span className="block text-[10px] uppercase tracking-[0.12em] text-slate-500">Next</span>
+        <span className="block font-mono text-sm font-semibold text-white">{windLabel || "-"}</span>
+      </span>
     </div>
   );
 };
@@ -352,7 +384,7 @@ const BottomResourcePanel = ({ gameState }) => {
   const life = gameState?.resources?.life || {};
   const maxActions = Math.max(Number(gameState?.actions_left || 0), Number(gameState?.config?.rules?.actions_per_season || 3));
   return (
-    <div className="absolute bottom-0 left-0 right-0 flex min-h-16 flex-wrap items-center gap-5 bg-slate-950/95 px-5 py-3 text-sm">
+    <div className="absolute bottom-0 left-0 right-0 z-20 flex min-h-16 flex-wrap items-center gap-5 bg-slate-950 px-5 py-3 text-sm shadow-[0_-14px_35px_rgba(2,6,23,0.35)]">
       <ActionMeter available={Number(gameState?.actions_left || 0)} total={maxActions} />
       <ResourceMeter
         allocated={Number(life.allocated || 0)}
@@ -739,7 +771,12 @@ const effectSummary = (effect) => {
   if (effect?.type === "production") return `${specs.resource || "life"} ${signed(specs.value || 0)}`;
   if (effect?.type === "stress") return signed(specs.value || 0);
   if (effect?.type === "hydration_push") return `+${specs.value || 1} x${specs.iterations || 1}`;
-  if (effect?.type === "strain_extraction") return `threshold ${specs.threshold || 5}`;
+  if (effect?.type === "aquifer_network") return `collect r${specs.source_radius || 1} / release r${specs.release_radius || 2} to H+${specs.release_below || 1}`;
+  if (effect?.type === "strain_extraction") {
+    return Array.isArray(specs.thresholds) && specs.thresholds.length
+      ? `thresholds ${specs.thresholds.join(" / ")}`
+      : `threshold ${specs.threshold || 5}`;
+  }
   return specs.value !== undefined ? signed(specs.value) : "";
 };
 

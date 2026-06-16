@@ -67,12 +67,18 @@ def default_creation_payload() -> dict[str, Any]:
             "survive_phases": 25,
             "target_maturity": 1000,
         },
+        "wind": {
+            "mode": "random",
+            "schedule": [],
+        },
+        "events": [],
     }
 
 
 def normalize_creation_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     source = payload or {}
     goals = source.get("goals") or {}
+    wind = source.get("wind") or {}
     normalized_tiles: dict[str, dict[str, Any]] = {}
     for key, value in (source.get("tiles") or {}).items():
         if not isinstance(value, dict):
@@ -83,8 +89,48 @@ def normalize_creation_payload(payload: dict[str, Any] | None) -> dict[str, Any]
                 tile[field] = value[field]
         if "hydration" in tile:
             tile["hydration"] = int(tile["hydration"])
-        if tile:
+        terrain_value = str(tile.get("terrain") or "")
+        is_real_tile = (
+            (("terrain" in tile) and terrain_value not in {"", "__empty"})
+            or int(tile.get("hydration") or 0) != 0
+            or bool(tile.get("nutrient_type"))
+            or bool(tile.get("building"))
+            or bool(tile.get("building_upgrade"))
+        )
+        if tile and is_real_tile:
             normalized_tiles[str(key)] = tile
+    wind_schedule = []
+    for item in wind.get("schedule") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            season = max(1, int(item.get("season") or 1))
+        except (TypeError, ValueError):
+            continue
+        direction = str(item.get("direction") or item.get("wind") or "").upper()
+        if direction in {"E", "SE", "SW", "W", "NW", "NE"}:
+            wind_schedule.append({"season": season, "direction": direction})
+    wind_schedule.sort(key=lambda item: item["season"])
+    events = []
+    for item in source.get("events") or []:
+        if not isinstance(item, dict):
+            continue
+        event_type = str(item.get("type") or "sudden_drought")
+        if event_type != "sudden_drought":
+            continue
+        try:
+            season = max(1, int(item.get("season") or item.get("trigger_season") or 1))
+            severity = max(1, min(4, int(item.get("severity") or 1)))
+        except (TypeError, ValueError):
+            continue
+        events.append({
+            "id": str(item.get("id") or f"sudden_drought_{season}_{severity}"),
+            "type": "sudden_drought",
+            "season": season,
+            "severity": severity,
+            "revealed": bool(item.get("revealed", True)),
+        })
+    events.sort(key=lambda item: (item["season"], item["severity"]))
     return {
         "version": 1,
         "tiles": normalized_tiles,
@@ -93,6 +139,11 @@ def normalize_creation_payload(payload: dict[str, Any] | None) -> dict[str, Any]
             "survive_phases": int(goals.get("survive_phases") or 25),
             "target_maturity": int(goals.get("target_maturity") or 1000),
         },
+        "wind": {
+            "mode": "scheduled" if str(wind.get("mode") or "random") == "scheduled" else "random",
+            "schedule": wind_schedule,
+        },
+        "events": events,
     }
 
 

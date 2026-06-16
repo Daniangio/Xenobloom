@@ -13,6 +13,7 @@
   "hydration_max": 3,
   "strain_threshold": 5,
   "strain_triplet_maturity_bonus": 10,
+  "aquifer_pool_max": 5,
   "stress_collapse_threshold": 3,
   "core_start_q": 0,
   "core_start_r": 0
